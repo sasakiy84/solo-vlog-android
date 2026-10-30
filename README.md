@@ -1,6 +1,12 @@
 # Solo Vlog Android
 
-Android 16（API 36）以上向けの Vlog アプリ。現在は APK のビルド・署名・配布を検証するための最小起動画面のみで、撮影・編集機能は未実装です。
+Android 16（API 36）以上向けの、短い日常を積み重ねるローカル Vlog アプリ **daylog**。起動すると撮影画面が開き、2・3・5 秒をワンタップで切り替えられます。
+
+- 撮影後は自動保存し、そのまま次の撮影へ。直後の「取り消す」で不要なクリップを戻せます。
+- 一日の開始時刻は設定で変更でき、撮影時刻と撮影地のタイムゾーンから既存のクリップも再分類します。初期値は 04:00 です。
+- 縦 9:16／横 16:9 は別々の記録にし、向きが違う動画を無理に結合しません。
+- 日ごとの一覧では撮影順に全クリップが選択済みです。不要なものだけチェックを外し、一本の動画としてギャラリーの `Movies/Daylog` に保存できます。個別の再生・保存・削除にも対応します。
+- 環境音と構図グリッドは切り替え可能。クリップを自動削除せず、ログイン・サーバーへの送信は使いません。アプリの削除前には必要な記録を書き出してください。
 
 ## ビルド
 
@@ -10,7 +16,7 @@ GitHub Actions は公式 Android CLI から SDK を準備するため、ラン�
 
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
-./gradlew --no-daemon :app:lintDebug :app:assembleDebug
+./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
 クラウド環境では、最初に `source /workspace/android-dev/env.sh` を実行し、Gradle の代わりに `python3 scripts/gradle-cloud.py` を使うと、既存プロキシを JVM に適用できます。プロキシ設定をリポジトリに保存する必要はありません。
@@ -51,3 +57,14 @@ Actions は検証・lint、署名付き APK のビルド、署名と APK 内の�
 配布先は GitHub Releases です。Google Play への公開は含みません。端末上での動作確認には、Android 16 以上の端末またはエミュレーターを別途使用します。
 
 GitHub 連携に権限が不足する場合は、対象リポジトリだけを許可した fine-grained token をクラウド環境の `SOLO_GITHUB_TOKEN` に安全に登録します。セットアップからエージェントが操作するには、Repository permissions の Secrets・Actions・Contents・Workflows に Read and write が必要です。`scripts/release.py` はこの変数が存在すると GitHub CLI に適用します。GitHub Actions 内部では組み込みの `GITHUB_TOKEN` を使用するため、個人トークンをワークフローの Secrets に登録する必要はありません。
+
+
+## カメラの動作確認とスクリーンショット
+
+専用の Android 16 テスト端末で `./gradlew :app:connectedDebugAndroidTest` を実行すると、CameraX による 2・3・5 秒の撮影、Media3 によるギャラリー保存、区切り時刻と縦横の変更を操作します。テストはカメラとマイクの権限を許可し、撮影用の設定を変更するため、普段使いの端末ではなく専用端末で実行してください。
+
+GitHub Actions の `Android camera journey` は KVM 対応の専用エミュレーターを起動し、同じテストと実画面のスクリーンショットを `daylog-ui-verification` に保存します。重いテストのため手動実行にしています。カメラ映像はエミュレーターの仮想シーンです。
+
+## 撮影導線の参考
+
+[けいすけ氏「FilmLog の使い方」](https://note.com/keisukemiura/n/n7b114c260f82) の、短い定尺撮影、時系列での整列、全素材を選んで始める編集、構図グリッド、環境音を参考にしました。タップの手ブレを避けるため録画前に 350ms の静止時間を置き、指定した秒数はその後から数えます。日常を中断しないことを優先し、毎回の確認画面や色編集・SNS 機能は追加していません。素材の期限付き自動削除も採用していません。

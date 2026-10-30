@@ -47,7 +47,7 @@ jobs:
       - name: Test and lint
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py' -v
-          ./gradlew --no-daemon :app:lintRelease
+          ./gradlew --no-daemon :app:testReleaseUnitTest :app:lintRelease
       - name: Restore signing key
         env:
           ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
