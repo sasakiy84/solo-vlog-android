@@ -53,11 +53,11 @@ public final class JournalRulesTest {
         Clip abroad=new Clip("b",early.capturedAt(),2000,2,false,true,"UTC");
         assertThat(JournalRules.captureTime(abroad)).isEqualTo("18:40");
     }
-    @Test public void disablingTheTimeKeepsTheClipCaptionAndAnEmptyCaptionAddsNothing(){
+    @Test public void captionCanBeTrimmedAndClearedWithoutChangingTheCaptureTime(){
         Clip clip=new Clip("a",at("2026-10-30T09:00:00"),2000,2,false,true,TOKYO.getId()).withCaption("  朝ごはん  ");
-        assertThat(JournalRules.overlayText(clip,true)).isEqualTo("09:00\n朝ごはん");
-        assertThat(JournalRules.overlayText(clip,false)).isEqualTo("朝ごはん");
-        assertThat(JournalRules.overlayText(clip.withCaption(""),false)).isEmpty();
+        assertThat(clip.caption()).isEqualTo("朝ごはん");
+        assertThat(clip.withCaption("").caption()).isEmpty();
+        assertThat(JournalRules.captureTime(clip.withCaption(""))).isEqualTo("09:00");
     }
     @Test public void editingACaptionPreservesOriginalCaptureAndSelectionMetadata(){
         Clip original=new Clip("a",at("2026-10-30T09:00:00"),3100,3,true,false,TOKYO.getId());

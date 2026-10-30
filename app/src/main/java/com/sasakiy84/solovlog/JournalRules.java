@@ -38,11 +38,6 @@ public final class JournalRules {
         return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId()))
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
     }
-    public static String overlayText(Clip clip,boolean showTime){
-        String caption=clip.caption().strip();
-        return showTime?captureTime(clip)+(caption.isEmpty()?"":"\n"+caption):caption;
-    }
-
     public static long exportDuration(Clip clip) {
         return Math.min(clip.durationMs(), clip.plannedSeconds() * 1000L);
     }
