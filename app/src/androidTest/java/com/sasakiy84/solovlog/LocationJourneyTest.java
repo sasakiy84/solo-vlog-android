@@ -103,7 +103,9 @@ public final class LocationJourneyTest {
             String day=JournalRules.day(System.currentTimeMillis(),240,ZoneId.systemDefault()).toString();repository.dayCaption(day,"東京・京都旅行");
             Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
             await(()->device.getDisplayRotation()==0);device.waitForIdle();
-            Clip first=record(2);find(By.desc("クリップのテキスト")).setText("東京に到着");await(()->clip(first.id()).caption().equals("東京に到着"));
+            Clip first=record(2);find(By.pkg(Pattern.compile(".*inputmethod.*")));
+            DeviceImages.screenshot(context,device,"09-post-capture-keyboard");
+            find(By.desc("クリップのテキスト")).setText("東京に到着");await(()->clip(first.id()).caption().equals("東京に到着"));
             String originalRotation;try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){metadata.setDataSource(repository.file(first.id()).getAbsolutePath());originalRotation=metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);}
             byte[] original=samples(repository.file(first.id()));assertThat(clip(first.id()).location()).isNull();
             click(By.text("現在地を追加"));

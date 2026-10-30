@@ -464,7 +464,14 @@ public final class MainActivity extends ComponentActivity {
     private void focusEditor(EditText input,AlertDialog dialog){
         input.setSingleLine(true);input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
         input.setOnEditorActionListener((v,action,event)->{if(action==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){dialog.dismiss();return true;}return false;});
-        input.requestFocus();input.post(()->{if(dialog.isShowing())getSystemService(android.view.inputmethod.InputMethodManager.class).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});
+        android.view.Window window=dialog.getWindow();
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE|android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        // A posted request can run before the dialog owns focus and be ignored by the IME.
+        input.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener(){
+            @Override public void onWindowFocusChanged(boolean focused){if(focused){input.getViewTreeObserver().removeOnWindowFocusChangeListener(this);window.getInsetsController().show(WindowInsets.Type.ime());}}
+        });
+        input.requestFocus();if(input.hasWindowFocus())window.getInsetsController().show(WindowInsets.Type.ime());
     }
     private void editDayCaption(){
         LocalDate day=selectedDay;LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -528,7 +535,7 @@ public final class MainActivity extends ComponentActivity {
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){edited[0]=edited[0].withCaption(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}
             @Override public void afterTextChanged(Editable s){}
         });
-        gap(content,12);content.addView(saveVideo,lp(-1,48));
+        if(!justCaptured){gap(content,12);content.addView(saveVideo,lp(-1,48));}
         dialog.setOnDismissListener(d->{
             main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.video.stopPlayback();editorOpen=false;pendingLocationAction=null;pendingLocationFailure=null;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;main.removeCallbacks(locationTimeout);locations.stop();
             if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();if(!leavingForExport[0])resumeCamera();}}
