@@ -53,7 +53,7 @@ public final class CameraJourneyTest {
         List<Clip> after=repository.all();assertThat(after).hasSize(count+1);
         Clip clip=after.get(after.size()-1);
         assertThat(clip.plannedSeconds()).isEqualTo(duration);
-        assertThat(clip.durationMs()).isAtLeast(300L);
+        assertThat(clip.durationMs()).isAtLeast(duration*1000L);
         assertThat(clip.durationMs()).isAtMost(duration*1000L+2000);
         text("●  READY");return clip;
     }

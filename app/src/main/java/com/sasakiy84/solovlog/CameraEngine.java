@@ -97,7 +97,8 @@ public final class CameraEngine {
             arm=null;
             try{
                 capturedAt=System.currentTimeMillis();
-                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).build());
+                // Keep a little tail so the final selected length survives encoder/muxer latency.
+                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).setDurationLimitMillis(seconds*1000L+250).build());
                 if(audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled();
                 recording=pending.start(ContextCompat.getMainExecutor(context),event->{
                     if(event instanceof VideoRecordEvent.Start){
@@ -107,12 +108,12 @@ public final class CameraEngine {
                                 if(recording==null)return;
                                 float fraction=Math.min(1f,(SystemClock.elapsedRealtime()-started)/(seconds*1000f));
                                 listener.progress(fraction,false);
-                                if(fraction>=1)stop();else handler.postDelayed(this,40);
+                                if(SystemClock.elapsedRealtime()-started>seconds*1000L+8000)stop();else handler.postDelayed(this,40);
                             }
                         };handler.post(tick);
                     }else if(event instanceof VideoRecordEvent.Finalize end){
                         if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;
-                        if(!end.hasError()||end.getError()==VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE)listener.saved(target,capturedAt);
+                        if(!end.hasError()||end.getError()==VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED||end.getError()==VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE)listener.saved(target,capturedAt);
                         else{Log.e("DaylogCamera","Recording failed, code="+end.getError(),end.getCause());target.delete();listener.error("撮影を保存できませんでした。空き容量とカメラの状態を確認してください。");}
                     }
                 });

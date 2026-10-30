@@ -178,11 +178,11 @@ public final class MainActivity extends ComponentActivity {
         if(prefs.getBoolean("grid",true))frame.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
         LinearLayout overlay=row();overlay.setPadding(dp(16),dp(8),dp(8),dp(8));
         liveLabel=bold("●  STANDBY",11,Ui.INK);liveLabel.setLetterSpacing(.12f);liveLabel.setGravity(Gravity.CENTER_VERTICAL);
-        overlay.addView(liveLabel,new LinearLayout.LayoutParams(0,dp(48),1));
+        liveLabel.setPadding(dp(10),0,dp(10),0);liveLabel.setBackground(Ui.rounded(this,0x99000000,16));overlay.addView(liveLabel,lp(-2,32));overlay.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         Ui.Icon audio=icon(sound()?"mic":"muted",sound()?"環境音をオフ":"環境音をオン",this::toggleSound);
-        overlay.addView(audio,lp(48,48));captureControls.add(audio);frame.addView(overlay,new FrameLayout.LayoutParams(-1,dp(64),Gravity.TOP));
+        Ui.touch(audio,0x99000000,24);overlay.addView(audio,lp(48,48));captureControls.add(audio);frame.addView(overlay,new FrameLayout.LayoutParams(-1,dp(64),Gravity.TOP));
         TextView label=text(landscape()?"16:9   /   横で残す":"9:16   /   縦で残す",11,0xDDFFFFFF);
-        label.setPadding(dp(18),0,dp(18),dp(18));frame.addView(label,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        label.setPadding(dp(10),dp(6),dp(10),dp(6));label.setBackground(Ui.rounded(this,0x99000000,14));FrameLayout.LayoutParams formatParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.START);formatParams.setMargins(dp(16),0,0,dp(16));frame.addView(label,formatParams);
         if(!granted(Manifest.permission.CAMERA)){
             LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,22);prompt.setBackgroundColor(0xE620251D);
             prompt.addView(bold("今日の一瞬を。",24,Ui.INK));gap(prompt,12);
@@ -220,8 +220,8 @@ public final class MainActivity extends ComponentActivity {
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
                 shutter.state(true,fraction,selectedSeconds);
-                liveLabel.setText(stabilizing?"●  STEADY":"●  REC   "+String.format(Locale.US,"%02d",Math.max(1,(int)Math.ceil(selectedSeconds*(1-fraction)))));
-                liveLabel.setTextColor(stabilizing?Ui.LIME:0xFFEAA38F);cameraHint.setText(stabilizing?"そのまま、少しだけ。":"撮影中 · タップで途中まで保存");
+                liveLabel.setText(stabilizing?"●  STEADY":fraction>=1?"●  SAVE":"●  REC   "+String.format(Locale.US,"%02d",Math.max(1,(int)Math.ceil(selectedSeconds*(1-fraction)))));
+                liveLabel.setTextColor(stabilizing?Ui.LIME:0xFFEAA38F);cameraHint.setText(stabilizing?"そのまま、少しだけ。":fraction>=1?"かけらを保存しています":"撮影中 · タップで途中まで保存");
             }
             @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
             @Override public void error(String message){
@@ -295,7 +295,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private void renderJournal(){
         toolbar("日々の記録",()->navigate(Screen.CAMERA),true);
-        LinearLayout content=scrollBody();content.addView(bold("なんでもない日が、\n好きな一日になる。",28,Ui.INK));gap(content,24);
+        LinearLayout content=scrollBody();
         TreeSet<LocalDate> days=new TreeSet<>(Comparator.reverseOrder());days.add(today());
         for(Clip clip:repository.all())days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
@@ -382,7 +382,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout formats=row();
         for(boolean horizontal:new boolean[]{false,true}){
             LinearLayout card=column();card.setGravity(Gravity.CENTER);padded(card,16);card.setBackground(Ui.outlined(this,landscape()==horizontal?0xFF29331F:Ui.CARD,landscape()==horizontal?Ui.LIME:Ui.LINE,20));
-            card.addView(new Ui.Icon(this,horizontal?"landscape":"portrait",landscape()==horizontal?Ui.LIME:Ui.MUTED,null,null),lp(52,52));gap(card,10);card.addView(bold(horizontal?"横  16:9":"縦  9:16",15,Ui.INK));
+            card.addView(new Ui.Icon(this,horizontal?"landscape":"portrait",landscape()==horizontal?Ui.LIME:Ui.MUTED,null,null),lp(52,52));gap(card,10);TextView formatCaption=bold(horizontal?"横  16:9":"縦  9:16",15,Ui.INK);formatCaption.setGravity(Gravity.CENTER);card.addView(formatCaption);
             LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(132),1);params.setMargins(horizontal?dp(6):0,0,horizontal?0:dp(6),0);formats.addView(card,params);
             card.setFocusable(true);card.setContentDescription(horizontal?"横向きで撮影":"縦向きで撮影");card.setSelected(landscape()==horizontal);
             card.setOnClickListener(v->{prefs.edit().putBoolean("landscape",horizontal).apply();journalLandscape=horizontal;applyOrientation();renderSettingsBody();});
