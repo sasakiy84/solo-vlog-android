@@ -6,6 +6,8 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
 import android.media.MediaMetadataRetriever;
+import android.graphics.Bitmap;
+import java.io.FileOutputStream;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.MediaStore;
@@ -38,6 +40,9 @@ public final class CameraJourneyTest {
         File folder=new File(context.getExternalFilesDir(null),"screenshots");folder.mkdirs();
         File screenshot=new File(folder,name+".png");
         assertThat(device.takeScreenshot(screenshot)).isTrue();
+        publishImage(screenshot,name);
+    }
+    private void publishImage(File screenshot,String name) throws Exception {
         // AGP can uninstall the app after the test; shared MediaStore output survives that cleanup.
         ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,name+".png");
         values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/DaylogTestScreenshots");values.put(MediaStore.Images.Media.IS_PENDING,1);
@@ -65,13 +70,22 @@ public final class CameraJourneyTest {
     @Test public void captureExportAndChangeSettings() throws Exception {
         device.executeShellCommand("pm grant com.sasakiy84.solovlog android.permission.CAMERA");
         device.executeShellCommand("pm grant com.sasakiy84.solovlog android.permission.RECORD_AUDIO");
-        context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("sound",false).putInt("dayStart",240).commit();
+        context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("sound",false).putBoolean("showTime",true).putInt("dayStart",240).commit();
         Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Clip two=record(2),three=record(3),five=record(5);
         assertThat(two.landscape()).isFalse();assertThat(three.landscape()).isFalse();assertThat(five.landscape()).isFalse();
         SystemClock.sleep(5500);screenshot("01-camera");
-        description("日々の記録").click();text("動画を保存");screenshot("02-journal");
+        description("日々の記録").click();text("動画を保存");
+        description("1日のテキストを編集").click();description("1日のテキスト").setText("京都旅行 1日目");
+        device.findObject(By.res("android","button1")).click();text("京都旅行 1日目");
+        String day=JournalRules.day(two.capturedAt(),240,ZoneId.of(two.zoneId())).toString();
+        assertThat(repository.dayCaption(day)).isEqualTo("京都旅行 1日目");
+        UiObject2 first=device.wait(Until.findObject(By.descStartsWith("クリップを再生 ")),15000);assertThat(first).isNotNull();first.click();
+        description("クリップのテキスト").setText("駅前で朝ごはん");screenshot("06-clip-text");
+        device.findObject(By.res("android","button1")).click();
+        assertThat(repository.all().get(0).caption()).isEqualTo("駅前で朝ごはん");
+        screenshot("02-journal");
         UiObject2 save=device.wait(Until.findObject(By.text("動画を保存")),15000);assertThat(save).isNotNull();save.click();
         assertThat(device.wait(Until.hasObject(By.text("保存しました")),180000)).isTrue();
         try(Cursor cursor=context.getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,new String[]{MediaStore.Video.Media._ID},MediaStore.Video.Media.RELATIVE_PATH+"=?",new String[]{"Movies/Daylog/"},MediaStore.Video.Media._ID+" DESC")){
@@ -87,10 +101,20 @@ public final class CameraJourneyTest {
                 String rotation=media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
                 if("90".equals(rotation)||"270".equals(rotation)){int old=width;width=height;height=old;}
                 assertThat(height).isGreaterThan(width);
+                for(int n=0;n<3;n++){
+                    Bitmap frame=media.getFrameAtTime(new long[]{1000000L,4000000L,8000000L}[n],MediaMetadataRetriever.OPTION_CLOSEST);
+                    assertThat(frame).isNotNull();File image=File.createTempFile("daylog-caption-",".png",context.getCacheDir());
+                    try(FileOutputStream output=new FileOutputStream(image)){assertThat(frame.compress(Bitmap.CompressFormat.PNG,100,output)).isTrue();}
+                    publishImage(image,"07-export-frame-"+(n+1));frame.recycle();image.delete();
+                }
             }
         }
         screenshot("03-saved");device.findObject(By.res("android","button2")).click();
         description("設定").click();text("1日の切り替え時刻");screenshot("04-settings");
+        description("撮影時刻を表示").click();
+        assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getBoolean("showTime",true)).isFalse();
+        description("撮影時刻を表示").click();
+        assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getBoolean("showTime",false)).isTrue();
         description("1日の切り替え時刻 04:00").click();
         UiObject2 toggle=device.wait(Until.findObject(By.res("android","toggle_mode")),5000);
         if(toggle!=null)toggle.click();
@@ -116,6 +140,8 @@ public final class CameraJourneyTest {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();device.waitForIdle();SystemClock.sleep(1500);
         Clip horizontal=record(2);assertThat(horizontal.landscape()).isTrue();
         SystemClock.sleep(5500);screenshot("05-landscape");
+        assertThat(repository.all().stream().filter(c->c.id().equals(two.id())).findFirst().orElseThrow().caption()).isEqualTo("駅前で朝ごはん");
+        assertThat(repository.dayCaption(day)).isEqualTo("京都旅行 1日目");
         assertThat(repository.file(two.id()).exists()).isTrue();
         assertThat(repository.file(three.id()).exists()).isTrue();
         assertThat(repository.file(five.id()).exists()).isTrue();

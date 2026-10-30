@@ -15,6 +15,7 @@ import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.ExportException;
+import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import java.io.File;
@@ -34,7 +35,7 @@ public final class VideoExporter {
     private Transformer transformer;
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
 
-    public void export(List<Clip> clips, ClipRepository repository, String name, Listener listener) {
+    public void export(List<Clip> clips, ClipRepository repository, String name, String dayCaption, boolean showTime, Listener listener) {
         if (clips.isEmpty()) { listener.error("保存するクリップを選んでください。"); return; }
         if (transformer != null) { listener.error("現在の保存が終わるまでお待ちください。"); return; }
         List<EditedMediaItem> items = new ArrayList<>();
@@ -42,7 +43,10 @@ public final class VideoExporter {
             if (!repository.file(clip.id()).isFile()) { listener.error("元のクリップが見つかりません。"); return; }
             MediaItem item = new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build();
-            items.add(new EditedMediaItem.Builder(item).build());
+            EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item);
+            if(!dayCaption.isBlank()||showTime||!clip.caption().isBlank())
+                edited.setEffects(new Effects(List.of(),List.of(new CaptionOverlay(clip,dayCaption,showTime))));
+            items.add(edited.build());
         }
         EditedMediaItemSequence sequence = new EditedMediaItemSequence.Builder(items).experimentalSetForceAudioTrack(true).build();
         Composition composition = new Composition.Builder(sequence).build();

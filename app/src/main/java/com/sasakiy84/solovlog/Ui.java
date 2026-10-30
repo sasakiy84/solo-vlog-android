@@ -47,7 +47,7 @@ final class Ui {
             case "library"->R.drawable.ic_video_library;case "flip"->R.drawable.ic_cameraswitch;
             case "mic"->R.drawable.ic_mic;case "muted"->R.drawable.ic_mic_off;
             case "check"->R.drawable.ic_check_circle;case "unchecked"->R.drawable.ic_circle;
-            case "download"->R.drawable.ic_download;case "camera"->R.drawable.ic_videocam;
+            case "edit"->R.drawable.ic_edit;case "download"->R.drawable.ic_download;case "camera"->R.drawable.ic_videocam;
             default->R.drawable.ic_chevron_right;
         };
         android.graphics.drawable.Drawable d=c.getDrawable(resource).mutate();

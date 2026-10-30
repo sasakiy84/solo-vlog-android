@@ -46,6 +46,25 @@ public final class JournalRulesTest {
         assertThat(JournalRules.orientationFor(List.of(yesterday),LocalDate.of(2026,10,31),240,true)).isTrue();
         assertThat(JournalRules.orientationFor(List.of(),LocalDate.of(2026,10,31),240,false)).isFalse();
     }
+    @Test public void timestampUsesTheCaptureTimezoneAndActualClockEvenBeforeDayBoundary(){
+        Clip early=new Clip("a",at("2026-10-31T03:40:00"),2000,2,false,true,TOKYO.getId());
+        assertThat(JournalRules.captureTime(early)).isEqualTo("03:40");
+        assertThat(JournalRules.day(early.capturedAt(),240,TOKYO)).isEqualTo(LocalDate.of(2026,10,30));
+        Clip abroad=new Clip("b",early.capturedAt(),2000,2,false,true,"UTC");
+        assertThat(JournalRules.captureTime(abroad)).isEqualTo("18:40");
+    }
+    @Test public void disablingTheTimeKeepsTheClipCaptionAndAnEmptyCaptionAddsNothing(){
+        Clip clip=new Clip("a",at("2026-10-30T09:00:00"),2000,2,false,true,TOKYO.getId()).withCaption("  朝ごはん  ");
+        assertThat(JournalRules.overlayText(clip,true)).isEqualTo("09:00\n朝ごはん");
+        assertThat(JournalRules.overlayText(clip,false)).isEqualTo("朝ごはん");
+        assertThat(JournalRules.overlayText(clip.withCaption(""),false)).isEmpty();
+    }
+    @Test public void editingACaptionPreservesOriginalCaptureAndSelectionMetadata(){
+        Clip original=new Clip("a",at("2026-10-30T09:00:00"),3100,3,true,false,TOKYO.getId());
+        Clip edited=original.withCaption("京都駅 🚅");
+        assertThat(original.caption()).isEmpty();
+        assertThat(edited).isEqualTo(new Clip("a",original.capturedAt(),3100,3,true,false,TOKYO.getId(),"京都駅 🚅"));
+    }
     @Test public void exportKeepsRequestedDurationOrShortInterruptedRecording(){
         assertThat(JournalRules.exportDuration(new Clip("a",0,3120,3,false,true,"UTC"))).isEqualTo(3000);
         assertThat(JournalRules.exportDuration(new Clip("b",0,900,5,false,true,"UTC"))).isEqualTo(900);

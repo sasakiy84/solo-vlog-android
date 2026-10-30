@@ -24,6 +24,11 @@ import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
+import android.widget.EditText;
+import android.text.InputFilter;
+import android.text.InputType;
+import android.text.TextWatcher;
+import android.text.Editable;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -308,6 +313,13 @@ public final class MainActivity extends ComponentActivity {
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);
+        String dayCaption=repository.dayCaption(selectedDay.toString());
+        LinearLayout dayText=row();
+        TextView title=text(dayCaption.isEmpty()?"1日のテキスト":dayCaption,16,dayCaption.isEmpty()?Ui.MUTED:Ui.INK);
+        dayText.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        dayText.addView(new Ui.Icon(this,"edit",Ui.MUTED,null,null),lp(48,48));
+        Ui.touch(dayText,Ui.BG,8);dayText.setContentDescription("1日のテキストを編集");dayText.setOnClickListener(v->editDayCaption());
+        content.addView(dayText,lp(-1,-2));gap(content,12);
         journalLandscape=orientationFor(selectedDay);
         List<Clip> list=clips(selectedDay,journalLandscape,false),selected=clips(selectedDay,journalLandscape,true);
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
@@ -350,23 +362,51 @@ public final class MainActivity extends ComponentActivity {
         return card;
     }
     private String clipTime(Clip clip){return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));}
+    private EditText captionInput(String value,String label,int limit){
+        EditText input=new EditText(this);input.setText(value);input.setHint(label);input.setContentDescription(label);
+        input.setTextSize(16);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setMaxLines(3);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;
+    }
+    private void editDayCaption(){
+        LocalDate day=selectedDay;LinearLayout content=column();padded(content,20);
+        EditText input=captionInput(repository.dayCaption(day.toString()),"1日のテキスト",80);content.addView(input,lp(-1,-2));
+        new AlertDialog.Builder(this).setTitle("1日のテキスト").setView(content).setNegativeButton("キャンセル",null)
+            .setPositiveButton("保存",(d,w)->{repository.dayCaption(day.toString(),input.getText().toString());render();}).show();
+    }
     private void review(Clip clip){
-        LinearLayout content=column();padded(content,16);VideoView video=new VideoView(this);content.addView(video,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?180:330));
+        LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);
+        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());
+        VideoView video=new VideoView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+        String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
+        CaptionOverlay.Preview captions=new CaptionOverlay.Preview(this,clip,repository.dayCaption(day),prefs.getBoolean("showTime",true));
+        frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
+        content.addView(frame,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?150:300));
         MediaController controller=new MediaController(this);controller.setAnchorView(video);video.setMediaController(controller);video.setVideoPath(repository.file(clip.id()).getAbsolutePath());
         video.setOnPreparedListener(player->{player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(content).setPositiveButton("閉じる",null).create();
-        gap(content,12);content.addView(button("このクリップを保存",true,()->{dialog.dismiss();export(List.of(clip),"clip",clip.landscape());}),lp(-1,52));gap(content,8);
+        gap(content,12);EditText input=captionInput(clip.caption(),"クリップのテキスト",120);content.addView(input,lp(-1,-2));
+        input.addTextChangedListener(new TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count){captions.update(clip.withCaption(s.toString()),repository.dayCaption(day),prefs.getBoolean("showTime",true));}
+            @Override public void afterTextChanged(Editable s){}
+        });
+        ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
+            .setPositiveButton("完了",(d,w)->{repository.caption(clip.id(),input.getText().toString());render();}).create();
+        gap(content,12);content.addView(button("このクリップを保存","download",true,()->{
+            Clip edited=clip.withCaption(input.getText().toString());repository.caption(edited.id(),edited.caption());dialog.dismiss();export(List.of(edited),"clip",clip.landscape());
+        }),lp(-1,52));gap(content,8);
         content.addView(button("クリップを削除",false,()->{
             dialog.dismiss();new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？").setMessage("元の動画は元に戻せません。書き出し済みの動画は残ります。").setNegativeButton("残す",null)
                 .setPositiveButton("削除",(d,w)->{try{repository.delete(clip.id());thumbnails.remove(clip.id());render();}catch(RuntimeException e){toast("削除できませんでした");}}).show();
-        }),lp(-1,48));dialog.setOnDismissListener(d->video.stopPlayback());dialog.show();
+        }),lp(-1,48));dialog.setOnDismissListener(d->video.stopPlayback());dialog.show();captions.startProbing(video,repository.file(clip.id()),io);
     }
     private void export(List<Clip> selected,String day,boolean horizontal){
         if(exporting)return;if(selected.isEmpty()){toast("クリップを選択してください");return;}exporting=true;
         LinearLayout content=column();padded(content,24);content.setGravity(Gravity.CENTER);content.addView(new ProgressBar(this),lp(48,48));gap(content,16);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("動画を保存中").setView(content).setCancelable(false).create();dialog.show();
         String name="daylog_"+day+"_"+(horizontal?"landscape":"portrait")+"_"+LocalTime.now().format(DateTimeFormatter.ofPattern("HHmmss"));
-        exporter.export(selected,repository,name,new VideoExporter.Listener(){
+        String captionDay=JournalRules.day(selected.get(0).capturedAt(),boundary(),ZoneId.of(selected.get(0).zoneId())).toString();
+        exporter.export(selected,repository,name,repository.dayCaption(captionDay),prefs.getBoolean("showTime",true),new VideoExporter.Listener(){
             @Override public void saved(Uri uri){
                 exporting=false;if(isDestroyed())return;dialog.dismiss();new AlertDialog.Builder(MainActivity.this).setTitle("保存しました").setMessage("Movies / Daylog に保存しました。")
                     .setPositiveButton("開く",(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("ギャラリーから動画を開けます");}}).setNegativeButton("閉じる",null).show();
@@ -391,6 +431,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout day=preferenceRow("1日の切り替え時刻",time);day.setContentDescription("1日の切り替え時刻 "+time);
         day.setOnClickListener(v->new TimePickerDialog(this,(picker,h,m)->{prefs.edit().putInt("dayStart",h*60+m).apply();applyOrientation();renderSettingsBody();},boundary()/60,boundary()%60,true).show());
         content.addView(day);gap(content,24);
+        content.addView(settingToggle("撮影時刻を表示",prefs.getBoolean("showTime",true),()->{prefs.edit().putBoolean("showTime",!prefs.getBoolean("showTime",true)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("音声",sound(),this::toggleSound));gap(content,1);
         content.addView(settingToggle("グリッド",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,32);
         content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);

@@ -57,6 +57,7 @@ dependencies {
     implementation("androidx.camera:camera-video:1.5.0")
     implementation("androidx.camera:camera-view:1.5.0")
     implementation("androidx.media3:media3-transformer:1.8.0")
+    implementation("androidx.media3:media3-effect:1.8.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.google.truth:truth:1.4.4")
     androidTestImplementation("androidx.test:runner:1.6.2")
