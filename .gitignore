@@ -1,5 +1,7 @@
 .gradle/
 **/build/
+!.agents/skills/agp-9-upgrade/references/android/build/
+!.agents/skills/agp-9-upgrade/references/android/build/**
 local.properties
 .idea/
 *.iml
