@@ -26,6 +26,14 @@ public final class JournalRules {
             .sorted(Comparator.comparingLong(Clip::capturedAt).thenComparing(Clip::id)).toList();
     }
 
+    /** A day's first clip fixes its format even if preferences or selection later change. */
+    public static boolean orientationFor(List<Clip> clips, LocalDate day, int startMinutes, boolean fallback) {
+        return clips.stream()
+            .filter(c -> day(c.capturedAt(),startMinutes,ZoneId.of(c.zoneId())).equals(day))
+            .min(Comparator.comparingLong(Clip::capturedAt).thenComparing(Clip::id))
+            .map(Clip::landscape).orElse(fallback);
+    }
+
     public static long exportDuration(Clip clip) {
         return Math.min(clip.durationMs(), clip.plannedSeconds() * 1000L);
     }

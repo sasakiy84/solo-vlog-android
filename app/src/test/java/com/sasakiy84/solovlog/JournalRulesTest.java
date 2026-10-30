@@ -36,6 +36,16 @@ public final class JournalRulesTest {
         assertThat(JournalRules.clipsFor(all,day,true,240,true)).containsExactly(landscape);
         assertThat(JournalRules.clipsFor(all,day,false,240,false)).containsExactly(morning,excluded).inOrder();
     }
+    @Test public void firstClipLocksDayFormatEvenIfExcludedOrPreferencesChange(){
+        Clip first=new Clip("a",at("2026-10-30T09:00:00"),2000,2,false,false,TOKYO.getId());
+        Clip later=new Clip("b",at("2026-10-30T10:00:00"),2000,2,true,true,TOKYO.getId());
+        assertThat(JournalRules.orientationFor(List.of(later,first),LocalDate.of(2026,10,30),240,true)).isFalse();
+    }
+    @Test public void freshDayUsesTheConfiguredFormat(){
+        Clip yesterday=new Clip("a",at("2026-10-30T09:00:00"),2000,2,false,true,TOKYO.getId());
+        assertThat(JournalRules.orientationFor(List.of(yesterday),LocalDate.of(2026,10,31),240,true)).isTrue();
+        assertThat(JournalRules.orientationFor(List.of(),LocalDate.of(2026,10,31),240,false)).isFalse();
+    }
     @Test public void exportKeepsRequestedDurationOrShortInterruptedRecording(){
         assertThat(JournalRules.exportDuration(new Clip("a",0,3120,3,false,true,"UTC"))).isEqualTo(3000);
         assertThat(JournalRules.exportDuration(new Clip("b",0,900,5,false,true,"UTC"))).isEqualTo(900);

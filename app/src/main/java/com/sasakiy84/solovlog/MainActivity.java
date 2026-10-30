@@ -109,7 +109,7 @@ public final class MainActivity extends ComponentActivity {
         });
         render();
     }
-    @Override protected void onResume(){super.onResume();if(screen==Screen.CAMERA&&preview!=null&&!captureBusy)bindCamera();}
+    @Override protected void onResume(){super.onResume();if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();bindCamera();}}
     @Override protected void onStop(){if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
@@ -118,7 +118,8 @@ public final class MainActivity extends ComponentActivity {
         state.putString("day",selectedDay.toString());state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
     }
     private int dp(float value){return Ui.dp(this,value);}
-    private boolean landscape(){return prefs.getBoolean("landscape",false);}
+    private boolean landscape(){return orientationFor(today());}
+    private boolean orientationFor(LocalDate day){return JournalRules.orientationFor(repository.all(),day,boundary(),prefs.getBoolean("landscape",false));}
     private int boundary(){return prefs.getInt("dayStart",240);}
     private boolean granted(String p){return ContextCompat.checkSelfPermission(this,p)==PackageManager.PERMISSION_GRANTED;}
     private boolean sound(){return prefs.getBoolean("sound",true)&&granted(Manifest.permission.RECORD_AUDIO);}
@@ -130,6 +131,7 @@ public final class MainActivity extends ComponentActivity {
         if(captureBusy||exporting)return;
         if(next==Screen.SETTINGS)settingsReturn=screen;
         if(next==Screen.JOURNAL&&screen==Screen.CAMERA){selectedDay=today();journalLandscape=landscape();}
+        if(next==Screen.CAMERA)applyOrientation();
         screen=next;render();
     }
     private void render(){
@@ -137,7 +139,7 @@ public final class MainActivity extends ComponentActivity {
         root=column();root.setBackgroundColor(Ui.BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{
             Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
-            root.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;
+            v.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;
         });
         setContentView(root);root.requestApplyInsets();
         if(screen==Screen.CAMERA)renderCamera();else if(screen==Screen.JOURNAL)renderJournal();else renderSettingsBody();
@@ -150,15 +152,18 @@ public final class MainActivity extends ComponentActivity {
     private void gap(LinearLayout parent,int h){parent.addView(new View(this),lp(1,h));}
     private void padded(View view,int n){view.setPadding(dp(n),dp(n),dp(n),dp(n));}
     private TextView button(String label,boolean primary,Runnable action){
-        TextView v=bold(label,15,primary?Ui.BG:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.LIME:Ui.CARD,18);
+        TextView v=bold(label,15,primary?Ui.BG:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.ACCENT:Ui.CARD,10);
         v.setPadding(dp(16),dp(12),dp(16),dp(12));v.setMinHeight(dp(48));v.setOnClickListener(view->action.run());return v;
+    }
+    private TextView button(String label,String iconKind,boolean primary,Runnable action){
+        TextView v=button(label,primary,action);v.setCompoundDrawablesRelative(Ui.drawable(this,iconKind,primary?Ui.BG:Ui.INK),null,null,null);v.setCompoundDrawablePadding(dp(8));return v;
     }
     private Ui.Icon icon(String kind,String label,Runnable action){return new Ui.Icon(this,kind,Ui.INK,label,action);}
     private void toast(String message){if(!isDestroyed())Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
     private LinearLayout toolbar(String title,Runnable back,boolean settings){
         LinearLayout bar=row();bar.setPadding(dp(12),dp(5),dp(12),dp(5));
         if(back!=null)bar.addView(icon("back","前の画面に戻る",back),lp(48,48));
-        TextView label=bold(title,title.equals("daylog")?29:17,Ui.INK);label.setGravity(Gravity.CENTER_VERTICAL);
+        TextView label=bold(title,title.equals("daylog")?23:18,Ui.INK);label.setGravity(Gravity.CENTER_VERTICAL);
         if(back==null)label.setPadding(dp(10),0,0,0);
         bar.addView(label,new LinearLayout.LayoutParams(0,dp(48),1));
         if(settings)bar.addView(icon("gear","設定",()->navigate(Screen.SETTINGS)),lp(48,48));
@@ -172,29 +177,27 @@ public final class MainActivity extends ComponentActivity {
         FrameLayout stage=new FrameLayout(this);
         LinearLayout.LayoutParams stageParams=wide?new LinearLayout.LayoutParams(0,-1,1):new LinearLayout.LayoutParams(-1,0,1);
         stageParams.setMargins(dp(20),dp(wide?4:10),dp(wide?0:20),dp(8));body.addView(stage,stageParams);
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,landscape());frame.setBackground(Ui.rounded(this,Ui.CARD,24));frame.setClipToOutline(true);
+        Ui.AspectFrame frame=new Ui.AspectFrame(this,landscape());frame.setBackground(Ui.rounded(this,Ui.CARD,12));frame.setClipToOutline(true);
         stage.addView(frame,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
         preview=new PreviewView(this);frame.addView(preview,new FrameLayout.LayoutParams(-1,-1));
         if(prefs.getBoolean("grid",true))frame.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
         LinearLayout overlay=row();overlay.setPadding(dp(16),dp(8),dp(8),dp(8));
-        liveLabel=bold("●  STANDBY",11,Ui.INK);liveLabel.setLetterSpacing(.12f);liveLabel.setGravity(Gravity.CENTER_VERTICAL);
+        liveLabel=bold("準備中",11,Color.WHITE);liveLabel.setGravity(Gravity.CENTER_VERTICAL);
         liveLabel.setPadding(dp(10),0,dp(10),0);liveLabel.setBackground(Ui.rounded(this,0x99000000,16));overlay.addView(liveLabel,lp(-2,32));overlay.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
-        Ui.Icon audio=icon(sound()?"mic":"muted",sound()?"環境音をオフ":"環境音をオン",this::toggleSound);
+        Ui.Icon audio=new Ui.Icon(this,sound()?"mic":"muted",Color.WHITE,sound()?"音声をオフ":"音声をオン",this::toggleSound);
         Ui.touch(audio,0x99000000,24);overlay.addView(audio,lp(48,48));captureControls.add(audio);frame.addView(overlay,new FrameLayout.LayoutParams(-1,dp(64),Gravity.TOP));
-        TextView label=text(landscape()?"16:9   /   横で残す":"9:16   /   縦で残す",11,0xDDFFFFFF);
-        label.setPadding(dp(10),dp(6),dp(10),dp(6));label.setBackground(Ui.rounded(this,0x99000000,14));FrameLayout.LayoutParams formatParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.START);formatParams.setMargins(dp(16),0,0,dp(16));frame.addView(label,formatParams);
         if(!granted(Manifest.permission.CAMERA)){
-            LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,22);prompt.setBackgroundColor(0xE620251D);
-            prompt.addView(bold("今日の一瞬を。",24,Ui.INK));gap(prompt,12);
-            TextView explanation=text("気になったものを、短く撮る。\nあとは、ひとつの記録に。",13,Ui.MUTED);explanation.setGravity(Gravity.CENTER);prompt.addView(explanation);gap(prompt,24);
-            prompt.addView(button("カメラを使う",true,()->requestPermissions(false)),lp(-1,-2));frame.addView(prompt,new FrameLayout.LayoutParams(-1,-1));
+            LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,22);prompt.setBackgroundColor(Ui.BG);
+            prompt.addView(bold("カメラへのアクセス",24,Ui.INK));gap(prompt,12);
+            TextView explanation=text("撮影するにはカメラを許可してください。",13,Ui.MUTED);explanation.setGravity(Gravity.CENTER);prompt.addView(explanation);gap(prompt,24);
+            prompt.addView(button("カメラを許可",true,()->requestPermissions(false)),lp(-1,-2));frame.addView(prompt,new FrameLayout.LayoutParams(-1,-1));
         }
         LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(12),dp(4),dp(12),dp(8));body.addView(controls,wide?lp(190,-1):lp(-1,-2));
 
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
         for(int duration:new int[]{2,3,5}){
             TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.BG:Ui.MUTED);chip.setGravity(Gravity.CENTER);
-            chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Ui.LIME:Ui.CARD,22));chip.setSelected(duration==selectedSeconds);chip.setContentDescription(duration+"秒を選択");chip.setFocusable(true);chip.setTag(duration);durationChips.add(chip);
+            chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Ui.ACCENT:Ui.CARD,22));chip.setSelected(duration==selectedSeconds);chip.setContentDescription(duration+"秒を選択");chip.setFocusable(true);chip.setTag(duration);durationChips.add(chip);
             LinearLayout.LayoutParams params=lp(wide?48:70,48);params.setMargins(dp(4),0,dp(4),0);lengths.addView(chip,params);
             chip.setOnClickListener(v->{if(!captureBusy){selectedSeconds=duration;prefs.edit().putInt("seconds",duration).apply();resetCaptureControls();}});captureControls.add(chip);
         }
@@ -207,21 +210,21 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout.LayoutParams shutterParams=lp(88,88);if(!wide)shutterParams.setMargins(dp(32),0,dp(32),0);capture.addView(shutter,shutterParams);
         if(!wide)capture.addView(flip,lp(64,64));controls.addView(capture,lp(-1,92));captureControls.add(library);captureControls.add(flip);
         if(wide){LinearLayout side=row();side.setGravity(Gravity.CENTER);side.addView(library,lp(64,48));side.addView(flip,lp(64,48));controls.addView(side);}
-        cameraHint=text("タップで"+selectedSeconds+"秒。今日のかけらに。",11,Ui.MUTED);cameraHint.setGravity(Gravity.CENTER);controls.addView(cameraHint,lp(-1,28));
+        cameraHint=text("",11,Ui.MUTED);cameraHint.setGravity(Gravity.CENTER);controls.addView(cameraHint,lp(-1,20));
         undo=button("",false,()->{
             if(lastSaved!=null&&!captureBusy)try{repository.delete(lastSaved.id());lastSaved=null;undo.setVisibility(View.GONE);cameraCount.setText(cameraSummary());}catch(RuntimeException e){toast("取り消せませんでした");}
         });undo.setVisibility(View.GONE);controls.addView(undo,lp(-1,44));
         shutter.setEnabled(false);preview.post(this::bindCamera);
     }
-    private String cameraSummary(){List<Clip> list=clips(today(),landscape(),false);return today().format(DateTimeFormatter.ofPattern("MM.dd"))+"  /  "+list.size()+" clips";}
+    private String cameraSummary(){List<Clip> list=clips(today(),landscape(),false);return today().format(DateTimeFormatter.ofPattern("MM.dd"))+"  ·  "+list.size()+"本";}
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
-            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setText("●  READY");}}
+            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
-                shutter.state(true,fraction,selectedSeconds);
-                liveLabel.setText(stabilizing?"●  STEADY":fraction>=1?"●  SAVE":"●  REC   "+String.format(Locale.US,"%02d",Math.max(1,(int)Math.ceil(selectedSeconds*(1-fraction)))));
-                liveLabel.setTextColor(stabilizing?Ui.LIME:0xFFEAA38F);cameraHint.setText(stabilizing?"そのまま、少しだけ。":fraction>=1?"かけらを保存しています":"撮影中 · タップで途中まで保存");
+                shutter.state(true,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
+                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"録画中  "+String.format(Locale.US,"%02d",Math.max(1,(int)Math.ceil(selectedSeconds*(1-fraction)))));
+                liveLabel.setTextColor(Color.WHITE);
             }
             @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
             @Override public void error(String message){
@@ -243,9 +246,9 @@ public final class MainActivity extends ComponentActivity {
     }
     private void resetCaptureControls(){
         for(View view:captureControls)view.setEnabled(true);
-        shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"●  READY":"●  STANDBY");liveLabel.setTextColor(Ui.INK);
-        cameraHint.setText("タップで"+selectedSeconds+"秒。今日のかけらに。");cameraCount.setText(cameraSummary());
-        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.BG:Ui.MUTED);chip.setBackground(Ui.rounded(this,selected?Ui.LIME:Ui.CARD,22));}
+        shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"撮影できます":"準備中");liveLabel.setTextColor(Color.WHITE);liveLabel.setVisibility(cameraReady?View.INVISIBLE:View.VISIBLE);
+        cameraHint.setText("");cameraCount.setText(cameraSummary());
+        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.BG:Ui.MUTED);chip.setBackground(Ui.rounded(this,selected?Ui.ACCENT:Ui.CARD,22));}
     }
     private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
@@ -265,7 +268,7 @@ public final class MainActivity extends ComponentActivity {
                 repository.add(clip);lastSaved=clip;
                 main.post(()->{
                     captureBusy=false;if(isDestroyed()){io.shutdown();return;}
-                    if(screen==Screen.CAMERA){resetCaptureControls();undo.setText(seconds(JournalRules.exportDuration(clip))+"秒、残しました。    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
+                    if(screen==Screen.CAMERA){resetCaptureControls();undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
                     toast("保存しました");
                 });
             }catch(Exception e){main.post(()->{captureBusy=false;if(!isDestroyed()){render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
@@ -278,7 +281,7 @@ public final class MainActivity extends ComponentActivity {
                 .setPositiveButton("設定を開く",(d,w)->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton("今はしない",null).show();return;
         }
         Runnable launch=()->{prefs.edit().putBoolean(asked,true).putBoolean("askedAudio",true).apply();if(audioOnly)prefs.edit().putBoolean("sound",true).apply();permissions.launch(audioOnly?new String[]{Manifest.permission.RECORD_AUDIO}:new String[]{Manifest.permission.CAMERA,Manifest.permission.RECORD_AUDIO});};
-        if(shouldShowRequestPermissionRationale(permission))new AlertDialog.Builder(this).setTitle(audioOnly?"その場の音も、一緒に。":"一瞬を撮るために").setMessage(audioOnly?"環境音を残すためにマイクを使います。オフでも撮影できます。":"プレビューと撮影にカメラを使います。マイクを許可すると環境音も残せます。")
+        if(shouldShowRequestPermissionRationale(permission))new AlertDialog.Builder(this).setTitle(audioOnly?"マイクの権限":"カメラの権限").setMessage(audioOnly?"環境音を残すためにマイクを使います。オフでも撮影できます。":"プレビューと撮影にカメラを使います。マイクを許可すると環境音も残せます。")
             .setPositiveButton("続ける",(d,w)->launch.run()).setNegativeButton("今はしない",null).show();
         else launch.run();
     }
@@ -301,26 +304,21 @@ public final class MainActivity extends ComponentActivity {
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
             TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd"))+"\n"+(date.equals(today())?"今日":date.format(DateTimeFormatter.ofPattern("EEE",Locale.ENGLISH))),14,date.equals(selectedDay)?Ui.BG:Ui.MUTED);
-            chip.setGravity(Gravity.CENTER);chip.setLineSpacing(dp(6),1);Ui.touch(chip,date.equals(selectedDay)?Ui.LIME:Ui.CARD,18);
+            chip.setGravity(Gravity.CENTER);chip.setLineSpacing(dp(6),1);Ui.touch(chip,date.equals(selectedDay)?Ui.ACCENT:Ui.CARD,10);
             LinearLayout.LayoutParams params=lp(74,76);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,80));gap(content,20);
-        LinearLayout formats=row();
-        for(boolean horizontal:new boolean[]{false,true}){
-            int count=clips(selectedDay,horizontal,false).size();TextView chip=button((horizontal?"横":"縦")+"  "+count,journalLandscape==horizontal,()->{journalLandscape=horizontal;render();});
-            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(48),1);params.setMargins(horizontal?dp(5):0,0,horizontal?0:dp(5),0);formats.addView(chip,params);
-        }
-        content.addView(formats);gap(content,18);
+        journalLandscape=orientationFor(selectedDay);
         List<Clip> list=clips(selectedDay,journalLandscape,false),selected=clips(selectedDay,journalLandscape,true);
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
-        LinearLayout hero=column();padded(hero,22);hero.setBackground(Ui.rounded(this,Ui.LIME,24));
-        hero.addView(text(selectedDay.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))+"   /   "+(journalLandscape?"16:9":"9:16"),12,0xFF536342));gap(hero,12);
-        hero.addView(bold(list.isEmpty()?"まだ、まっさらな一日。":"今日を、ひとつに。",23,Ui.BG));gap(hero,8);
-        hero.addView(text(selected.size()+" clips     /     "+seconds(total)+" sec",14,0xFF536342));gap(hero,20);
-        TextView save=button(list.isEmpty()?"最初の一瞬を撮る":"この日の動画を保存  ↗",false,()->{if(list.isEmpty())navigate(Screen.CAMERA);else export(selected,selectedDay.toString(),journalLandscape);});
-        save.setBackground(Ui.rounded(this,Ui.BG,14));hero.addView(save,lp(-1,52));content.addView(hero);gap(content,24);
-        LinearLayout heading=row();heading.addView(bold("この日のかけら",15,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));heading.addView(text("✓ を外すと動画から除外",10,Ui.MUTED));content.addView(heading);gap(content,14);
-        if(list.isEmpty())content.addView(text("目にとまった光、食べたもの、帰り道。\nひとつだけでも、今日の記録に。",14,Ui.MUTED));
+        LinearLayout summary=row();
+        TextView count=bold(selected.size()+"本 · "+seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
+        summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
+        TextView save=button("動画を保存","download",true,()->export(selected,selectedDay.toString(),journalLandscape));
+        save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
+        if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
+        // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
+        List<Clip> other=clips(selectedDay,!journalLandscape,false);
         int columns=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?3:2;
         for(int index=0;index<list.size();index+=columns){
             LinearLayout cards=row();cards.setGravity(Gravity.TOP);
@@ -330,14 +328,15 @@ public final class MainActivity extends ComponentActivity {
             }
             content.addView(cards);
         }
-        TextView capture=button("＋   もうひとつ、撮る",true,()->navigate(Screen.CAMERA));LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
+        for(Clip clip:other){TextView retained=button(clipTime(clip)+" · "+(clip.landscape()?"横":"縦"),false,()->review(clip));content.addView(retained,lp(-1,48));}
+        TextView capture=button("撮影する","camera",true,()->navigate(Screen.CAMERA));LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
     }
     private View clipCard(Clip clip){
-        LinearLayout card=column();FrameLayout frame=new FrameLayout(this);frame.setBackground(Ui.rounded(this,Ui.CARD,18));frame.setClipToOutline(true);
+        LinearLayout card=column();FrameLayout frame=new FrameLayout(this);frame.setBackground(Ui.rounded(this,Ui.CARD,10));frame.setClipToOutline(true);
         ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);frame.addView(image,new FrameLayout.LayoutParams(-1,-1));
         frame.setContentDescription("クリップを再生 "+clipTime(clip));frame.setFocusable(true);frame.setOnClickListener(v->review(clip));card.addView(frame,lp(-1,journalLandscape?124:188));
-        Ui.Icon check=new Ui.Icon(this,clip.included()?"check":"add",clip.included()?Ui.BG:Ui.INK,clip.included()?"このクリップを動画から除外":"このクリップを動画に含める",()->{repository.include(clip.id(),!clip.included());render();});
-        check.setBackground(Ui.rounded(this,clip.included()?Ui.LIME:0xCC20251D,22));FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(44),dp(44),Gravity.TOP|Gravity.END);cp.setMargins(dp(6),dp(6),dp(6),0);frame.addView(check,cp);
+        Ui.Icon check=new Ui.Icon(this,clip.included()?"check":"unchecked",Ui.INK,clip.included()?"このクリップを動画から除外":"このクリップを動画に含める",()->{repository.include(clip.id(),!clip.included());render();});
+        FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);frame.addView(check,cp);
         gap(card,9);LinearLayout meta=row();meta.addView(bold(clipTime(clip),14,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));meta.addView(text(seconds(JournalRules.exportDuration(clip))+"s",12,Ui.MUTED));card.addView(meta);
         Bitmap cached=thumbnails.get(clip.id());
         if(cached!=null)image.setImageBitmap(cached);
@@ -355,7 +354,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout content=column();padded(content,16);VideoView video=new VideoView(this);content.addView(video,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?180:330));
         MediaController controller=new MediaController(this);controller.setAnchorView(video);video.setMediaController(controller);video.setVideoPath(repository.file(clip.id()).getAbsolutePath());
         video.setOnPreparedListener(player->{player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(clip.durationMs())+"秒").setView(content).setPositiveButton("閉じる",null).create();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(content).setPositiveButton("閉じる",null).create();
         gap(content,12);content.addView(button("このクリップを保存",true,()->{dialog.dismiss();export(List.of(clip),"clip",clip.landscape());}),lp(-1,52));gap(content,8);
         content.addView(button("クリップを削除",false,()->{
             dialog.dismiss();new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？").setMessage("元の動画は元に戻せません。書き出し済みの動画は残ります。").setNegativeButton("残す",null)
@@ -363,49 +362,51 @@ public final class MainActivity extends ComponentActivity {
         }),lp(-1,48));dialog.setOnDismissListener(d->video.stopPlayback());dialog.show();
     }
     private void export(List<Clip> selected,String day,boolean horizontal){
-        if(exporting)return;if(selected.isEmpty()){toast("✓ を付けてクリップを選んでください");return;}exporting=true;
-        LinearLayout content=column();padded(content,24);content.setGravity(Gravity.CENTER);content.addView(new ProgressBar(this),lp(48,48));gap(content,16);content.addView(text("撮った順に、ひとつの動画へ。",14,Ui.INK));
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("一日を、まとめています").setView(content).setCancelable(false).create();dialog.show();
+        if(exporting)return;if(selected.isEmpty()){toast("クリップを選択してください");return;}exporting=true;
+        LinearLayout content=column();padded(content,24);content.setGravity(Gravity.CENTER);content.addView(new ProgressBar(this),lp(48,48));gap(content,16);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("動画を保存中").setView(content).setCancelable(false).create();dialog.show();
         String name="daylog_"+day+"_"+(horizontal?"landscape":"portrait")+"_"+LocalTime.now().format(DateTimeFormatter.ofPattern("HHmmss"));
         exporter.export(selected,repository,name,new VideoExporter.Listener(){
             @Override public void saved(Uri uri){
-                exporting=false;if(isDestroyed())return;dialog.dismiss();new AlertDialog.Builder(MainActivity.this).setTitle("今日が、一本になりました。").setMessage("ギャラリーの Movies / Daylog に保存しました。元のクリップも残っています。")
-                    .setPositiveButton("動画を見る",(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("ギャラリーから動画を開けます");}}).setNegativeButton("閉じる",null).show();
+                exporting=false;if(isDestroyed())return;dialog.dismiss();new AlertDialog.Builder(MainActivity.this).setTitle("保存しました").setMessage("Movies / Daylog に保存しました。")
+                    .setPositiveButton("開く",(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("ギャラリーから動画を開けます");}}).setNegativeButton("閉じる",null).show();
             }
             @Override public void error(String message){exporting=false;if(!isDestroyed()){dialog.dismiss();toast(message);}}
         });
     }
 
     private void renderSettingsBody(){
-        root.removeAllViews();toolbar("記録の設定",()->navigate(settingsReturn),false);
-        LinearLayout content=scrollBody();content.addView(bold("自分の一日に、\n合わせる。",29,Ui.INK));gap(content,28);content.addView(text("記録のかたち",12,Ui.MUTED));gap(content,12);
-        LinearLayout formats=row();
-        for(boolean horizontal:new boolean[]{false,true}){
-            LinearLayout card=column();card.setGravity(Gravity.CENTER);padded(card,16);card.setBackground(Ui.outlined(this,landscape()==horizontal?0xFF29331F:Ui.CARD,landscape()==horizontal?Ui.LIME:Ui.LINE,20));
-            card.addView(new Ui.Icon(this,horizontal?"landscape":"portrait",landscape()==horizontal?Ui.LIME:Ui.MUTED,null,null),lp(52,52));gap(card,10);TextView formatCaption=bold(horizontal?"横  16:9":"縦  9:16",15,Ui.INK);formatCaption.setGravity(Gravity.CENTER);card.addView(formatCaption);
-            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(132),1);params.setMargins(horizontal?dp(6):0,0,horizontal?0:dp(6),0);formats.addView(card,params);
-            card.setFocusable(true);card.setContentDescription(horizontal?"横向きで撮影":"縦向きで撮影");card.setSelected(landscape()==horizontal);
-            card.setOnClickListener(v->{prefs.edit().putBoolean("landscape",horizontal).apply();journalLandscape=horizontal;applyOrientation();renderSettingsBody();});
-        }
-        content.addView(formats);gap(content,12);content.addView(text("縦と横は、別々の動画にまとめます。",12,Ui.MUTED));gap(content,28);
-        content.addView(text("一日の区切り",12,Ui.MUTED));gap(content,12);
-        LinearLayout day=row();padded(day,18);Ui.touch(day,Ui.CARD,20);day.addView(new Ui.Icon(this,"moon",Ui.LIME,null,null),lp(40,40));
-        LinearLayout copy=column();copy.addView(bold("一日のはじまり",15,Ui.INK));gap(copy,5);copy.addView(text("この時刻までは、前日の記録に。",11,Ui.MUTED));day.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
-        day.addView(bold(String.format(Locale.JAPAN,"%02d:%02d",boundary()/60,boundary()%60),24,Ui.LIME));
-        day.setContentDescription("一日のはじまり "+String.format(Locale.JAPAN,"%02d:%02d",boundary()/60,boundary()%60));
-        day.setOnClickListener(v->new TimePickerDialog(this,(picker,h,m)->{prefs.edit().putInt("dayStart",h*60+m).apply();renderSettingsBody();},boundary()/60,boundary()%60,true).show());
-        content.addView(day);gap(content,10);content.addView(text("変更すると、これまでの記録も振り分け直します。",11,Ui.MUTED));gap(content,28);
-        content.addView(text("撮影",12,Ui.MUTED));gap(content,12);
-        content.addView(settingToggle("環境音を残す","その場の空気も、一緒に。",sound(),this::toggleSound));gap(content,10);
-        content.addView(settingToggle("構図のグリッド","余白をそろえて、静かな映像に。",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,28);
-        LinearLayout storage=column();padded(storage,20);storage.setBackground(Ui.outlined(this,Ui.BG,Ui.LINE,20));storage.addView(bold("この端末に、残す。",18,Ui.INK));gap(storage,10);
-        storage.addView(text(repository.all().size()+" clips  /  "+String.format(Locale.JAPAN,"%.1f MB",repository.bytes()/1048576f),13,Ui.LIME));gap(storage,12);
-        storage.addView(text("クリップはアプリ内に保存されます。\n残したい一日は「動画を保存」でギャラリーへ。\nアプリを削除すると、未書き出しのクリップも削除されます。",12,Ui.MUTED));content.addView(storage);gap(content,28);
-        TextView signature=text("daylog   /   small moments, kept.",11,Ui.MUTED);signature.setGravity(Gravity.CENTER);content.addView(signature);
+        root.removeAllViews();toolbar("設定",()->navigate(settingsReturn),false);
+        LinearLayout content=scrollBody();
+        LinearLayout format=preferenceRow("動画の向き",prefs.getBoolean("landscape",false)?"横":"縦");
+        format.setContentDescription("動画の向き");
+        format.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("動画の向き")
+            .setSingleChoiceItems(new String[]{"縦","横"},prefs.getBoolean("landscape",false)?1:0,(dialog,which)->{
+                prefs.edit().putBoolean("landscape",which==1).apply();dialog.dismiss();applyOrientation();renderSettingsBody();
+                if(landscape()!=(which==1))toast("次の撮影日から適用します");
+            })
+            .setNegativeButton("キャンセル",null).show());
+        content.addView(format);gap(content,1);
+        String time=String.format(Locale.JAPAN,"%02d:%02d",boundary()/60,boundary()%60);
+        LinearLayout day=preferenceRow("1日の切り替え時刻",time);day.setContentDescription("1日の切り替え時刻 "+time);
+        day.setOnClickListener(v->new TimePickerDialog(this,(picker,h,m)->{prefs.edit().putInt("dayStart",h*60+m).apply();applyOrientation();renderSettingsBody();},boundary()/60,boundary()%60,true).show());
+        content.addView(day);gap(content,24);
+        content.addView(settingToggle("音声",sound(),this::toggleSound));gap(content,1);
+        content.addView(settingToggle("グリッド",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,32);
+        content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);
+        content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",repository.bytes()/1048576f),14,Ui.MUTED));gap(content,12);
+        content.addView(text("アプリを削除すると、書き出していない動画も削除されます。",12,Ui.MUTED));
     }
-    private View settingToggle(String title,String description,boolean checked,Runnable action){
-        LinearLayout item=row();padded(item,18);Ui.touch(item,Ui.CARD,20);LinearLayout copy=column();copy.addView(bold(title,15,Ui.INK));gap(copy,5);copy.addView(text(description,11,Ui.MUTED));item.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
-        Switch toggle=new Switch(this);toggle.setChecked(checked);toggle.setContentDescription(title);toggle.setThumbTintList(android.content.res.ColorStateList.valueOf(checked?Ui.LIME:Ui.MUTED));
+    private LinearLayout preferenceRow(String title,String value){
+        LinearLayout item=row();item.setPadding(dp(4),dp(12),dp(4),dp(12));Ui.touch(item,Ui.BG,8);
+        TextView heading=text(title,16,Ui.INK);heading.setGravity(Gravity.CENTER_VERTICAL);item.addView(heading,new LinearLayout.LayoutParams(0,dp(40),1));
+        TextView label=text(value,15,Ui.MUTED);label.setGravity(Gravity.CENTER_VERTICAL);item.addView(label,lp(-2,40));
+        item.addView(new Ui.Icon(this,"chevron",Ui.MUTED,null,null),lp(40,40));return item;
+    }
+    private View settingToggle(String title,boolean checked,Runnable action){
+        LinearLayout item=row();item.setPadding(dp(4),dp(8),dp(4),dp(8));Ui.touch(item,Ui.BG,8);
+        item.addView(text(title,16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));
+        Switch toggle=new Switch(this);toggle.setChecked(checked);toggle.setContentDescription(title);
         toggle.setOnClickListener(v->action.run());item.addView(toggle,lp(52,48));item.setOnClickListener(v->action.run());return item;
     }
 }
