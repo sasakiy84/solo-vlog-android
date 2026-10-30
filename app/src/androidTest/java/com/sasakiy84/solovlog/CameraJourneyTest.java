@@ -17,6 +17,7 @@ import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
+import androidx.test.uiautomator.StaleObjectException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.OutputStream;
@@ -34,6 +35,11 @@ public final class CameraJourneyTest {
 
     private UiObject2 text(String value){UiObject2 object=device.wait(Until.findObject(By.text(value)),20000);assertThat(object).isNotNull();return object;}
     private UiObject2 description(String value){UiObject2 object=device.wait(Until.findObject(By.desc(value)),20000);assertThat(object).isNotNull();return object;}
+    private void clickDescription(String value){
+        long deadline=SystemClock.elapsedRealtime()+20000;
+        while(true)try{description(value).click();return;}
+        catch(StaleObjectException stale){if(SystemClock.elapsedRealtime()>=deadline)throw stale;device.waitForIdle();}
+    }
     private void screenshot(String name) throws Exception {
         device.waitForIdle();
         SystemClock.sleep(1500); // Wait for the compositor and asynchronous video thumbnails.
@@ -52,7 +58,7 @@ public final class CameraJourneyTest {
     }
     private Clip record(int duration) throws Exception {
         int count=repository.all().size();
-        description(duration+"秒を選択").click();
+        clickDescription(duration+"秒を選択");
         UiObject2 shutter=description(duration+"秒撮影");
         long readyDeadline=SystemClock.elapsedRealtime()+20000;
         while(!shutter.isEnabled()&&SystemClock.elapsedRealtime()<readyDeadline)SystemClock.sleep(100);
@@ -76,8 +82,8 @@ public final class CameraJourneyTest {
         Clip two=record(2),three=record(3),five=record(5);
         assertThat(two.landscape()).isFalse();assertThat(three.landscape()).isFalse();assertThat(five.landscape()).isFalse();
         SystemClock.sleep(5500);screenshot("01-camera");
-        description("日々の記録").click();text("動画を保存");
-        description("1日のテキストを編集").click();description("1日のテキスト").setText("京都旅行 1日目");
+        clickDescription("日々の記録");text("動画を保存");
+        clickDescription("1日のテキストを編集");description("1日のテキスト").setText("京都旅行 1日目");
         device.findObject(By.res("android","button1")).click();text("京都旅行 1日目");
         String day=JournalRules.day(two.capturedAt(),240,ZoneId.of(two.zoneId())).toString();
         assertThat(repository.dayCaption(day)).isEqualTo("京都旅行 1日目");
@@ -110,12 +116,12 @@ public final class CameraJourneyTest {
             }
         }
         screenshot("03-saved");device.findObject(By.res("android","button2")).click();
-        description("設定").click();text("1日の切り替え時刻");screenshot("04-settings");
-        description("撮影時刻を表示").click();
+        clickDescription("設定");text("1日の切り替え時刻");screenshot("04-settings");
+        clickDescription("撮影時刻を表示");
         assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getBoolean("showTime",true)).isFalse();
-        description("撮影時刻を表示").click();
+        clickDescription("撮影時刻を表示");
         assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getBoolean("showTime",false)).isTrue();
-        description("1日の切り替え時刻 04:00").click();
+        clickDescription("1日の切り替え時刻 04:00");
         UiObject2 toggle=device.wait(Until.findObject(By.res("android","toggle_mode")),5000);
         if(toggle!=null)toggle.click();
         UiObject2 hour=device.wait(Until.findObject(By.res("android","input_hour")),5000);
@@ -124,8 +130,8 @@ public final class CameraJourneyTest {
         device.findObject(By.res("android","button1")).click();
         description("1日の切り替え時刻 05:30");
         assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getInt("dayStart",0)).isEqualTo(330);
-        description("動画の向き").click();text("横").click();SystemClock.sleep(1500);
-        description("前の画面に戻る").click();text("撮影する").click();
+        clickDescription("動画の向き");text("横").click();SystemClock.sleep(1500);
+        clickDescription("前の画面に戻る");text("撮影する").click();
         Clip sameDay=record(2);assertThat(sameDay.landscape()).isFalse();
         // Advance the fixture to a fresh shooting day while retaining every original file.
         for(Clip clip:repository.all()){

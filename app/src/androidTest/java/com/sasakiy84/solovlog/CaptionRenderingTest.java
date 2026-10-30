@@ -1,7 +1,12 @@
 package com.sasakiy84.solovlog;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import android.content.Context;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import java.io.OutputStream;
+import androidx.media3.effect.DefaultVideoFrameProcessor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.media.MediaMetadataRetriever;
@@ -51,21 +56,25 @@ public final class CaptionRenderingTest {
             File output=File.createTempFile("contrast-",".mp4",context.getCacheDir());files.add(output);assertThat(output.delete()).isTrue();
             CountDownLatch done=new CountDownLatch(1);AtomicReference<Exception> error=new AtomicReference<>();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
-                running[0]=new Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).addListener(new Transformer.Listener(){
+                running[0]=new Transformer.Builder(context).setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build()).setVideoMimeType(MimeTypes.VIDEO_H264).addListener(new Transformer.Listener(){
                     @Override public void onCompleted(Composition result,ExportResult exported){done.countDown();}
                     @Override public void onError(Composition result,ExportResult exported,ExportException failure){error.set(failure);done.countDown();}
                 }).build();running[0].start(composition,output.getAbsolutePath());
             });
-            assertThat(done.await(180,TimeUnit.SECONDS)).isTrue();assertThat(error.get()).isNull();
+            assertThat(done.await(180,TimeUnit.SECONDS)).isTrue();if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(output.getAbsolutePath());
                 for(int n=0;n<3;n++){
                     Bitmap frame=media.getFrameAtTime(500000+n*1000000L,MediaMetadataRetriever.OPTION_CLOSEST);
                     assertThat(frame).isNotNull();boolean bright=n==0;
+                    ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"08-contrast-"+n+".png");values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/DaylogTestScreenshots");values.put(MediaStore.Images.Media.IS_PENDING,1);
+                    Uri image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertThat(image).isNotNull();
+                    try(OutputStream stream=context.getContentResolver().openOutputStream(image)){assertThat(stream).isNotNull();assertThat(frame.compress(Bitmap.CompressFormat.PNG,100,stream)).isTrue();}
+                    values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);context.getContentResolver().update(image,values,null,null);
                     assertThat(CaptionColors.luminance(frame.getPixel(0,0))>.8).isEqualTo(bright);
-                    assertInk(frame,bright,.03f,.03f,.8f,.2f); // day text
-                    assertInk(frame,bright,.03f,.8f,.7f,.98f); // clip text
-                    assertInk(frame,bright,.7f,.8f,.98f,.98f); // bottom-right clock
+                    assertInk(frame,bright,.03f,.03f,.8f,.2f,"background "+n+", day text"); // day text
+                    assertInk(frame,bright,.03f,.8f,.7f,.98f,"background "+n+", clip text"); // clip text
+                    assertInk(frame,bright,.7f,.8f,.98f,.98f,"background "+n+", clock"); // bottom-right clock
                     frame.recycle();
                 }
             }
@@ -74,12 +83,12 @@ public final class CaptionRenderingTest {
             for(File file:files)file.delete();
         }
     }
-    private static void assertInk(Bitmap frame,boolean bright,float left,float top,float right,float bottom){
+    private static void assertInk(Bitmap frame,boolean bright,float left,float top,float right,float bottom,String label){
         int count=0;
         for(int y=(int)(frame.getHeight()*top);y<frame.getHeight()*bottom;y++)for(int x=(int)(frame.getWidth()*left);x<frame.getWidth()*right;x++){
             int pixel=frame.getPixel(x,y);int r=(pixel>>16)&255,g=(pixel>>8)&255,b=pixel&255;
             if(bright?r<50&&g<50&&b<50:r>210&&g>210&&b>210)count++;
         }
-        assertThat(count).isGreaterThan(40);
+        assertWithMessage(label).that(count).isGreaterThan(40);
     }
 }

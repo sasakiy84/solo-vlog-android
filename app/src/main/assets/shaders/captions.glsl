@@ -8,8 +8,14 @@ uniform vec4 uClipRect;
 uniform vec4 uTimeRect;
 uniform vec3 uLumaWeights;
 uniform float uLumaThreshold;
+uniform float uLinearInput;
 varying vec2 vTexSamplingCoord;
 
+vec3 linearLight(vec3 color) {
+  if (uLinearInput > 0.5) return color;
+  // Media3's default SDR working space uses the BT.709 / SMPTE 170m transfer function.
+  return mix(color / 4.5, pow(max((color + 0.099) / 1.099, vec3(0.0)), vec3(1.0 / 0.45)), step(vec3(0.081), color));
+}
 vec3 caption(vec3 color, sampler2D mask, vec4 rect) {
   if (rect.z <= 0.0 || rect.w <= 0.0) return color;
   vec2 local = (vTexSamplingCoord - rect.xy) / rect.zw;
@@ -21,7 +27,7 @@ vec3 caption(vec3 color, sampler2D mask, vec4 rect) {
   for (int y = 0; y < 3; y++) {
     for (int x = 0; x < 5; x++) {
       vec2 sampleAt = rect.xy + rect.zw * vec2((float(x) + 0.5) / 5.0, (float(y) + 0.5) / 3.0);
-      luminance += dot(texture2D(uTexSampler, sampleAt).rgb, uLumaWeights);
+      luminance += dot(linearLight(texture2D(uTexSampler, sampleAt).rgb), uLumaWeights);
     }
   }
   float ink = luminance / 15.0 > uLumaThreshold ? 0.0 : 1.0;

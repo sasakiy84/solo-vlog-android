@@ -16,6 +16,7 @@ import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.Effects;
+import androidx.media3.effect.DefaultVideoFrameProcessor;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import java.io.File;
@@ -54,6 +55,7 @@ public final class VideoExporter {
         try { output = File.createTempFile("daylog-export-", ".mp4", context.getCacheDir()); output.delete(); }
         catch (Exception e) { listener.error("書き出し用の空き容量を確保できませんでした。"); return; }
         transformer = new Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build())
             .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(Composition result, ExportResult exportResult) {
                     transformer = null;

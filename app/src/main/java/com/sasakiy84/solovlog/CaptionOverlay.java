@@ -85,6 +85,7 @@ final class CaptionOverlay implements GlEffect {
                 program.setFloatsUniform("uTexTransformationMatrix",GlUtil.create4x4IdentityMatrix());
                 program.setFloatsUniform("uLumaWeights",hdr?new float[]{.2627f,.6780f,.0593f}:new float[]{.2126f,.7152f,.0722f});
                 program.setFloatUniform("uLumaThreshold",CaptionColors.CROSSOVER);
+                program.setFloatUniform("uLinearInput",hdr?1f:0f);
             }catch(IOException|GlUtil.GlException e){throw new VideoFrameProcessingException(e);}
         }
         @Override public Size configure(int width,int height) throws VideoFrameProcessingException{
@@ -143,7 +144,7 @@ final class CaptionOverlay implements GlEffect {
                     });
                 }
                 main.postDelayed(this,500);
-            }};main.post(probe);
+            }};post(probe);
         }
         private void clearLabels(){recycle(labels);labels=null;}
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){clearLabels();}
