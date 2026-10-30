@@ -48,7 +48,16 @@ public final class LocationJourneyTest {
     private final Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
     private final ClipRepository repository=ClipRepository.get(context);
-    private UiObject2 find(BySelector selector){UiObject2 object=device.wait(Until.findObject(selector),20000);assertThat(object).isNotNull();return object;}
+    private UiObject2 find(BySelector selector){
+        UiObject2 object=device.wait(Until.findObject(selector),20000);
+        if(object==null)try{
+            DeviceImages.screenshot(context,device,"location-failure");
+            java.io.ByteArrayOutputStream hierarchy=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(hierarchy);
+            String xml=hierarchy.toString(StandardCharsets.UTF_8);
+            for(int offset=0;offset<xml.length();offset+=3000)android.util.Log.e("DaylogLocationTest",xml.substring(offset,Math.min(offset+3000,xml.length())));
+        }catch(Exception diagnostic){android.util.Log.e("DaylogLocationTest","Could not capture failed UI",diagnostic);}
+        assertThat(object).isNotNull();return object;
+    }
     private void click(BySelector selector){long deadline=SystemClock.elapsedRealtime()+20000;while(true)try{find(selector).click();return;}catch(StaleObjectException stale){if(SystemClock.elapsedRealtime()>=deadline)throw stale;device.waitForIdle();}}
     private void await(BooleanSupplier condition){long deadline=SystemClock.elapsedRealtime()+30000;while(!condition.getAsBoolean()&&SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(100);assertThat(condition.getAsBoolean()).isTrue();}
     private Clip clip(String id){return repository.all().stream().filter(c->c.id().equals(id)).findFirst().orElseThrow();}
@@ -99,8 +108,9 @@ public final class LocationJourneyTest {
             byte[] original=samples(repository.file(first.id()));assertThat(clip(first.id()).location()).isNull();
             click(By.text("現在地を追加"));
             if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+                find(By.text(Pattern.compile("(?i)(don.t allow|許可しない)")));
                 DeviceImages.screenshot(context,device,"09-location-permission");
-                click(By.res(Pattern.compile(".*:id/permission_deny_button")));
+                click(By.text(Pattern.compile("(?i)(don.t allow|許可しない)")));
                 find(By.desc("クリップのテキスト"));assertThat(repository.file(first.id()).exists()).isTrue();assertThat(clip(first.id()).caption()).isEqualTo("東京に到着");
                 click(By.text("現在地を追加"));click(By.text("続ける"));
                 UiObject2 precise=device.wait(Until.findObject(By.res(Pattern.compile(".*:id/permission_location_accuracy_radio_fine"))),1500);if(precise!=null)precise.click();
