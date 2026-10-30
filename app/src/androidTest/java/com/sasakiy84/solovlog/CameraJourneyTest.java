@@ -109,6 +109,11 @@ public final class CameraJourneyTest {
             repository.getWritableDatabase().update("clips",shifted,"id=?",new String[]{clip.id()});
         }
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        long rotationDeadline=SystemClock.elapsedRealtime()+20000;
+        while(device.getDisplayRotation()!=1&&SystemClock.elapsedRealtime()<rotationDeadline)SystemClock.sleep(100);
+        assertThat(device.getDisplayRotation()).isEqualTo(1);
+        // The old portrait window can remain accessible until its rotation transition finishes.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();device.waitForIdle();SystemClock.sleep(1500);
         Clip horizontal=record(2);assertThat(horizontal.landscape()).isTrue();
         SystemClock.sleep(5500);screenshot("05-landscape");
         assertThat(repository.file(two.id()).exists()).isTrue();
