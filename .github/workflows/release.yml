@@ -43,7 +43,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+        run: bash scripts/setup-android-ci.sh
       - name: Test and lint
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py' -v

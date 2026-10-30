@@ -6,6 +6,8 @@ Android 16（API 36）以上向けの Vlog アプリ。現在は APK のビル�
 
 JDK 21、Android SDK Platform 36、Build Tools 36.0.0 を使用します。Gradle はチェックサムを固定した Wrapper を使用します。
 
+GitHub Actions は公式 Android CLI から SDK を準備するため、ランナーに `sdkmanager` が導入済みであることを前提にしません。
+
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 ./gradlew --no-daemon :app:lintDebug :app:assembleDebug
