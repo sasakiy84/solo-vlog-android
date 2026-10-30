@@ -1,28 +1,37 @@
 package com.sasakiy84.solovlog;
 
-import android.content.Context;
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.Range;
+import android.util.Rational;
+import android.view.Surface;
+import androidx.camera.core.CameraInfo;
+import androidx.camera.core.CameraInfoUnavailableException;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.Preview;
+import androidx.camera.core.UseCaseGroup;
+import androidx.camera.core.ViewPort;
+import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.video.FallbackStrategy;
 import androidx.camera.video.FileOutputOptions;
+import androidx.camera.video.PendingRecording;
 import androidx.camera.video.Quality;
 import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
 import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
 import androidx.camera.video.VideoRecordEvent;
-import androidx.camera.view.CameraController;
-import androidx.camera.view.LifecycleCameraController;
 import androidx.camera.view.PreviewView;
-import androidx.camera.view.video.AudioConfig;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
 import java.io.File;
 
-/** CameraX owns the camera lifecycle; timing begins only after recording has actually started. */
+/** The selected format fixes the output rotation, independent of sensor-orientation events. */
 public final class CameraEngine {
     public interface Listener {
         void ready();
@@ -32,94 +41,87 @@ public final class CameraEngine {
     }
     private final Context context;
     private final LifecycleOwner owner;
-    private final LifecycleCameraController controller;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Handler handler=new Handler(Looper.getMainLooper());
+    private final Recorder recorder=new Recorder.Builder().setQualitySelector(
+        QualitySelector.from(Quality.FHD,FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD))).build();
+    private ProcessCameraProvider provider;
     private PreviewView preview;
     private Recording recording;
-    private boolean busy;
-    private boolean front;
-    private long started;
-    private long capturedAt;
-    private Runnable arm;
-    private Runnable tick;
+    private boolean busy,front,horizontal,bound;
+    private long started,capturedAt;
+    private Runnable arm,tick;
+    private Listener bindingListener;
 
-    public CameraEngine(Context context, LifecycleOwner owner) {
-        this.context = context; this.owner = owner;
-        controller = new LifecycleCameraController(context);
-        controller.setEnabledUseCases(CameraController.VIDEO_CAPTURE);
-        controller.setVideoCaptureQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)));
-        controller.setVideoCaptureTargetFrameRate(new Range<>(30, 30));
-    }
-    public void bind(PreviewView target, Listener listener) {
-        if (preview == target && controller.getCameraInfo() != null) { listener.ready(); return; }
-        preview = target;
+    public CameraEngine(Context context,LifecycleOwner owner){this.context=context;this.owner=owner;}
+    public void bind(PreviewView target,boolean landscape,Listener listener){
+        if(preview==target&&bound&&horizontal==landscape){listener.ready();return;}
+        preview=target;horizontal=landscape;bindingListener=listener;
         target.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         target.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        controller.getInitializationFuture().addListener(() -> {
-            if (preview != target) return;
-            try {
-                controller.getInitializationFuture().get();
-                target.setController(controller);
-                controller.bindToLifecycle(owner);
-                listener.ready();
-            } catch (Exception e) { listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。"); }
-        }, ContextCompat.getMainExecutor(context));
-    }
-    public void unbind() { preview = null; controller.unbind(); }
-    public void flip() {
-        CameraSelector next = front ? CameraSelector.DEFAULT_BACK_CAMERA : CameraSelector.DEFAULT_FRONT_CAMERA;
-        if (!controller.hasCamera(next)) throw new IllegalStateException("このカメラは使えません");
-        controller.setCameraSelector(next); front = !front;
-    }
-    public boolean busy() { return busy; }
-    public void start(File target, int seconds, boolean audio, Listener listener) {
-        if (busy) return;
-        busy = true;
-        listener.progress(0, true);
-        // Let the phone settle after the tap; this delay is not part of the saved clip.
-        arm = () -> {
-            arm = null;
-            try {
-                capturedAt = System.currentTimeMillis();
-                AudioConfig audioConfig = AudioConfig.AUDIO_DISABLED;
-                if (audio && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                    audioConfig = AudioConfig.create(true);
+        var future=ProcessCameraProvider.getInstance(context);
+        future.addListener(()->{
+            if(preview!=target)return;
+            if(bound){listener.ready();return;}
+            try{
+                provider=future.get();provider.unbindAll();bound=false;
+                CameraSelector selector=front?CameraSelector.DEFAULT_FRONT_CAMERA:CameraSelector.DEFAULT_BACK_CAMERA;
+                if(!provider.hasCamera(selector)){
+                    selector=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
+                    if(!provider.hasCamera(selector))throw new IllegalStateException("No available camera");
+                    front=!front;
                 }
-                recording = controller.startRecording(new FileOutputOptions.Builder(target).build(), audioConfig,
-                    ContextCompat.getMainExecutor(context), event -> {
-                        if (event instanceof VideoRecordEvent.Start) {
-                            capturedAt = System.currentTimeMillis(); started = SystemClock.elapsedRealtime();
-                            tick = new Runnable() {
-                                @Override public void run() {
-                                    if (recording == null) return;
-                                    float fraction = Math.min(1f, (SystemClock.elapsedRealtime() - started) / (seconds * 1000f));
-                                    listener.progress(fraction, false);
-                                    if (fraction >= 1) stop(); else handler.postDelayed(this, 40);
-                                }
-                            };
-                            handler.post(tick);
-                        } else if (event instanceof VideoRecordEvent.Finalize end) {
-                            if (tick != null) handler.removeCallbacks(tick);
-                            recording = null; busy = false;
-                            if (!end.hasError() || end.getError() == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE) listener.saved(target, capturedAt);
-                            else {
-                                target.delete();
-                                listener.error("撮影を保存できませんでした。空き容量とカメラの状態を確認してください。");
-                            }
-                        }
-                    });
-            } catch (SecurityException e) {
-                recording = null; busy = false; target.delete();
-                listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");
-            } catch (RuntimeException e) {
-                recording = null; busy = false; target.delete();
-                listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");
-            }
-        };
-        handler.postDelayed(arm, 350);
+                CameraInfo info=provider.getCameraInfo(selector);
+                int rotation=JournalRules.targetRotation(info.getSensorRotationDegrees(Surface.ROTATION_0),landscape);
+                Preview viewfinder=new Preview.Builder().setTargetRotation(rotation).build();
+                viewfinder.setSurfaceProvider(target.getSurfaceProvider());
+                VideoCapture<Recorder> video=new VideoCapture.Builder<>(recorder).setTargetRotation(rotation).setTargetFrameRate(new Range<>(30,30)).build();
+                ViewPort viewport=new ViewPort.Builder(new Rational(landscape?16:9,landscape?9:16),rotation).setScaleType(ViewPort.FILL_CENTER).build();
+                provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
+                bound=true;listener.ready();
+            }catch(Exception e){Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
+        },ContextCompat.getMainExecutor(context));
     }
-    public void stop() {
-        if (recording != null) { if (tick != null) handler.removeCallbacks(tick); recording.stop(); }
-        if (arm != null) { handler.removeCallbacks(arm); arm = null; busy = false; }
+    public void unbind(){preview=null;bound=false;if(provider!=null)provider.unbindAll();}
+    public void flip(){
+        if(provider==null||preview==null)throw new IllegalStateException("Camera is not ready");
+        CameraSelector next=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
+        try { if(!provider.hasCamera(next))throw new IllegalStateException("Camera unavailable"); }
+        catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
+        front=!front;bound=false;bind(preview,horizontal,bindingListener);
+    }
+    public boolean busy(){return busy;}
+    public void start(File target,int seconds,boolean audio,Listener listener){
+        if(busy)return;busy=true;listener.progress(0,true);
+        // Avoid including the physical tap in the saved clip.
+        arm=()->{
+            arm=null;
+            try{
+                capturedAt=System.currentTimeMillis();
+                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).build());
+                if(audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled();
+                recording=pending.start(ContextCompat.getMainExecutor(context),event->{
+                    if(event instanceof VideoRecordEvent.Start){
+                        capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();
+                        tick=new Runnable(){
+                            @Override public void run(){
+                                if(recording==null)return;
+                                float fraction=Math.min(1f,(SystemClock.elapsedRealtime()-started)/(seconds*1000f));
+                                listener.progress(fraction,false);
+                                if(fraction>=1)stop();else handler.postDelayed(this,40);
+                            }
+                        };handler.post(tick);
+                    }else if(event instanceof VideoRecordEvent.Finalize end){
+                        if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;
+                        if(!end.hasError()||end.getError()==VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE)listener.saved(target,capturedAt);
+                        else{Log.e("DaylogCamera","Recording failed, code="+end.getError(),end.getCause());target.delete();listener.error("撮影を保存できませんでした。空き容量とカメラの状態を確認してください。");}
+                    }
+                });
+            }catch(SecurityException e){recording=null;busy=false;target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
+            catch(RuntimeException e){Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
+        };handler.postDelayed(arm,350);
+    }
+    public void stop(){
+        if(recording!=null){if(tick!=null)handler.removeCallbacks(tick);recording.stop();}
+        if(arm!=null){handler.removeCallbacks(arm);arm=null;busy=false;}
     }
 }

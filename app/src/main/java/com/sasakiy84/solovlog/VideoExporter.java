@@ -7,6 +7,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.util.Log;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
@@ -59,6 +60,7 @@ public final class VideoExporter {
                     });
                 }
                 @Override public void onError(Composition result, ExportResult exportResult, ExportException exception) {
+                    Log.e("DaylogExport", "Video export failed", exception);
                     transformer = null; output.delete(); listener.error("動画をまとめられませんでした。元のクリップは残っています。");
                 }
             }).build();

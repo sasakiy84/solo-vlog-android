@@ -29,4 +29,10 @@ public final class JournalRules {
     public static long exportDuration(Clip clip) {
         return Math.min(clip.durationMs(), clip.plannedSeconds() * 1000L);
     }
+
+    /** Surface rotation is expressed in quarter turns (0 or 1), including front-facing sensors. */
+    public static int targetRotation(int sensorDegrees, boolean landscape) {
+        boolean naturalPortrait = sensorDegrees % 180 != 0;
+        return landscape == naturalPortrait ? 1 : 0;
+    }
 }

@@ -2,6 +2,7 @@ package com.sasakiy84.solovlog;
 
 import static com.google.common.truth.Truth.assertThat;
 import android.content.Context;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
 import android.media.MediaMetadataRetriever;
@@ -15,6 +16,9 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.OutputStream;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -28,9 +32,16 @@ public final class CameraJourneyTest {
 
     private UiObject2 text(String value){UiObject2 object=device.wait(Until.findObject(By.text(value)),20000);assertThat(object).isNotNull();return object;}
     private UiObject2 description(String value){UiObject2 object=device.wait(Until.findObject(By.desc(value)),20000);assertThat(object).isNotNull();return object;}
-    private void screenshot(String name){
+    private void screenshot(String name) throws Exception {
         File folder=new File(context.getExternalFilesDir(null),"screenshots");folder.mkdirs();
-        assertThat(device.takeScreenshot(new File(folder,name+".png"))).isTrue();
+        File screenshot=new File(folder,name+".png");
+        assertThat(device.takeScreenshot(screenshot)).isTrue();
+        // AGP can uninstall the app after the test; shared MediaStore output survives that cleanup.
+        ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,name+".png");
+        values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/DaylogTestScreenshots");values.put(MediaStore.Images.Media.IS_PENDING,1);
+        Uri image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertThat(image).isNotNull();
+        try(FileInputStream source=new FileInputStream(screenshot);OutputStream target=context.getContentResolver().openOutputStream(image)){assertThat(target).isNotNull();source.transferTo(target);}
+        values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);context.getContentResolver().update(image,values,null,null);
     }
     private Clip record(int duration) throws Exception {
         int count=repository.all().size();
@@ -65,8 +76,13 @@ public final class CameraJourneyTest {
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(context,uri);
                 long duration=Long.parseLong(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
-                assertThat(duration).isAtLeast(700L);
-                assertThat(Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT))).isGreaterThan(Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)));
+                long expected=JournalRules.clipsFor(repository.all(),JournalRules.day(System.currentTimeMillis(),240,ZoneId.systemDefault()),false,240,true).stream().mapToLong(JournalRules::exportDuration).sum();
+                assertThat(duration).isAtLeast(expected-500);assertThat(duration).isAtMost(expected+500);
+                int width=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+                int height=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+                String rotation=media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                if("90".equals(rotation)||"270".equals(rotation)){int old=width;width=height;height=old;}
+                assertThat(height).isGreaterThan(width);
             }
         }
         screenshot("03-saved");device.findObject(By.res("android","button2")).click();

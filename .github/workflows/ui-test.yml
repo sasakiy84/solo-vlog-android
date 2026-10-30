@@ -27,7 +27,8 @@ jobs:
         if: always()
         run: |
           mkdir -p ui-artifacts
-          "$ANDROID_HOME/platform-tools/adb" pull /sdcard/Android/data/com.sasakiy84.solovlog/files/screenshots ui-artifacts/ || true
+          "$ANDROID_HOME/platform-tools/adb" pull /sdcard/Pictures/DaylogTestScreenshots ui-artifacts/ || true
+          "$ANDROID_HOME/platform-tools/adb" pull /sdcard/Movies/Daylog ui-artifacts/exports || true
           "$ANDROID_HOME/platform-tools/adb" logcat -d -t 2000 > ui-artifacts/logcat.txt || true
           cp "$RUNNER_TEMP/emulator.log" ui-artifacts/ || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

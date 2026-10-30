@@ -46,4 +46,10 @@ public final class JournalRulesTest {
         Clip newYork=new Clip("b",instant,2000,2,false,true,"America/New_York");
         assertThat(JournalRules.clipsFor(List.of(tokyo,newYork),LocalDate.of(2026,10,30),false,240,false)).containsExactly(tokyo);
     }
+    @Test public void selectedFormatHandlesPortraitAndLandscapeNativeSensors(){
+        for(int sensor:new int[]{0,90,180,270}){
+            assertThat((sensor+90*JournalRules.targetRotation(sensor,true))%180).isEqualTo(0);
+            assertThat((sensor+90*JournalRules.targetRotation(sensor,false))%180).isEqualTo(90);
+        }
+    }
 }

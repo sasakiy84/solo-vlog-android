@@ -224,10 +224,16 @@ public final class MainActivity extends ComponentActivity {
                 liveLabel.setTextColor(stabilizing?Ui.LIME:0xFFEAA38F);cameraHint.setText(stabilizing?"そのまま、少しだけ。":"撮影中 · タップで途中まで保存");
             }
             @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
-            @Override public void error(String message){captureBusy=false;if(!isDestroyed()){if(screen==Screen.CAMERA)render();toast(message);}}
+            @Override public void error(String message){
+                boolean wasRecording=captureBusy;captureBusy=false;
+                if(!isDestroyed()){
+                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");}
+                    toast(message);
+                }
+            }
         };
     }
-    private void bindCamera(){if(preview==null||screen!=Screen.CAMERA||captureBusy||!granted(Manifest.permission.CAMERA))return;camera.bind(preview,cameraListener());}
+    private void bindCamera(){if(preview==null||screen!=Screen.CAMERA||captureBusy||!granted(Manifest.permission.CAMERA))return;camera.bind(preview,landscape(),cameraListener());}
     private void startCapture(){
         if(!granted(Manifest.permission.CAMERA)){requestPermissions(false);return;}
         if(!cameraReady){toast("カメラを準備しています");return;}
@@ -252,7 +258,9 @@ public final class MainActivity extends ComponentActivity {
                 int height=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
                 String rotation=media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
                 if("90".equals(rotation)||"270".equals(rotation)){int old=width;width=height;height=old;}
-                if(duration<200)throw new IllegalStateException("Recording too short");
+                if(duration<200){
+                    file.delete();main.post(()->{captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA){resetCaptureControls();toast("撮影が短すぎました。もう一度撮ってみてください。");}});return;
+                }
                 Clip clip=new Clip(file.getName().replace(".mp4",""),capturedAt,duration,planned,width>height,true,zone);
                 repository.add(clip);lastSaved=clip;
                 main.post(()->{
