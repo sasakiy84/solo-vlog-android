@@ -1,0 +1,62 @@
+plugins {
+    id("com.android.application")
+}
+
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("0.1.0").get()
+require(Regex("(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})").matches(releaseVersion)) {
+    "releaseVersion must be MAJOR.MINOR.PATCH without leading zeros"
+}
+val (major, minor, patch) = releaseVersion.split('.').map(String::toInt)
+require(major <= 1999 && major + minor + patch > 0) { "Version must be between 0.0.1 and 1999.999.999" }
+val releaseCode = major * 1_000_000 + minor * 1_000 + patch
+val releaseStore = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+val releasePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
+
+android {
+    namespace = "com.sasakiy84.solovlog"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.sasakiy84.solovlog"
+        minSdk = 36
+        targetSdk = 36
+        versionCode = releaseCode
+        versionName = releaseVersion
+    }
+
+    if (releaseStore != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseStore)
+                storePassword = releasePassword
+                keyAlias = "solo-vlog-release"
+                keyPassword = releasePassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (releaseStore != null) signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+// A distributable release must never silently fall back to unsigned/debug signing.
+val verifyReleaseSigning by tasks.registering {
+    doLast {
+        require(!releaseStore.isNullOrBlank() && !releasePassword.isNullOrBlank()) {
+            "Set ANDROID_KEYSTORE_PATH and ANDROID_KEYSTORE_PASSWORD to build a signed release"
+        }
+        require(file(releaseStore).isFile) { "Release keystore does not exist" }
+    }
+}
+tasks.matching { it.name in setOf("packageRelease", "validateSigningRelease", "bundleRelease") }.configureEach {
+    dependsOn(verifyReleaseSigning)
+}
