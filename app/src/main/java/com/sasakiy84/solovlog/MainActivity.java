@@ -303,11 +303,11 @@ public final class MainActivity extends ComponentActivity {
         for(Clip clip:repository.all())days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
-            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd"))+"\n"+(date.equals(today())?"今日":date.format(DateTimeFormatter.ofPattern("EEE",Locale.ENGLISH))),14,date.equals(selectedDay)?Ui.BG:Ui.MUTED);
-            chip.setGravity(Gravity.CENTER);chip.setLineSpacing(dp(6),1);Ui.touch(chip,date.equals(selectedDay)?Ui.ACCENT:Ui.CARD,10);
-            LinearLayout.LayoutParams params=lp(74,76);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
+            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.BG:Ui.MUTED);
+            chip.setGravity(Gravity.CENTER);Ui.touch(chip,date.equals(selectedDay)?Ui.ACCENT:Ui.CARD,10);
+            LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
-        content.addView(dates,lp(-1,80));gap(content,20);
+        content.addView(dates,lp(-1,48));gap(content,20);
         journalLandscape=orientationFor(selectedDay);
         List<Clip> list=clips(selectedDay,journalLandscape,false),selected=clips(selectedDay,journalLandscape,true);
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
