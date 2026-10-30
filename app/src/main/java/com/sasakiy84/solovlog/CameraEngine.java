@@ -45,6 +45,8 @@ public final class CameraEngine {
     private final Recorder recorder=new Recorder.Builder().setQualitySelector(
         QualitySelector.from(Quality.FHD,FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD))).build();
     private ProcessCameraProvider provider;
+    private Preview boundPreview;
+    private VideoCapture<Recorder> boundVideo;
     private PreviewView preview;
     private Recording recording;
     private boolean busy,front,horizontal,bound;
@@ -63,7 +65,7 @@ public final class CameraEngine {
             if(preview!=target)return;
             if(bound){listener.ready();return;}
             try{
-                provider=future.get();provider.unbindAll();bound=false;
+                provider=future.get();releaseUseCases();bound=false;
                 CameraSelector selector=front?CameraSelector.DEFAULT_FRONT_CAMERA:CameraSelector.DEFAULT_BACK_CAMERA;
                 if(!provider.hasCamera(selector)){
                     selector=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
@@ -77,11 +79,17 @@ public final class CameraEngine {
                 VideoCapture<Recorder> video=new VideoCapture.Builder<>(recorder).setTargetRotation(rotation).setTargetFrameRate(new Range<>(30,30)).build();
                 ViewPort viewport=new ViewPort.Builder(new Rational(landscape?16:9,landscape?9:16),rotation).setScaleType(ViewPort.FILL_CENTER).build();
                 provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
+                boundPreview=viewfinder;boundVideo=video;
                 bound=true;listener.ready();
             }catch(Exception e){Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
-    public void unbind(){preview=null;bound=false;if(provider!=null)provider.unbindAll();}
+    public void unbind(){preview=null;bound=false;releaseUseCases();}
+    private void releaseUseCases(){
+        // A finishing Activity must never unbind a replacement Activity's camera.
+        if(provider!=null&&boundPreview!=null&&boundVideo!=null)provider.unbind(boundPreview,boundVideo);
+        boundPreview=null;boundVideo=null;
+    }
     public void flip(){
         if(provider==null||preview==null)throw new IllegalStateException("Camera is not ready");
         CameraSelector next=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
@@ -99,8 +107,11 @@ public final class CameraEngine {
                 capturedAt=System.currentTimeMillis();
                 PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).build());
                 if(audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled();
+                // If no first frame arrives, Start is never emitted; still allow recovery.
+                tick=()->{if(recording!=null)stop();};handler.postDelayed(tick,12000);
                 recording=pending.start(ContextCompat.getMainExecutor(context),event->{
                     if(event instanceof VideoRecordEvent.Start){
+                        if(tick!=null)handler.removeCallbacks(tick);
                         capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();
                         tick=new Runnable(){
                             @Override public void run(){
@@ -121,8 +132,8 @@ public final class CameraEngine {
                         else{Log.e("DaylogCamera","Recording failed, code="+end.getError(),end.getCause());target.delete();listener.error("撮影を保存できませんでした。空き容量とカメラの状態を確認してください。");}
                     }
                 });
-            }catch(SecurityException e){recording=null;busy=false;target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
-            catch(RuntimeException e){Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
+            }catch(SecurityException e){if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
+            catch(RuntimeException e){if(tick!=null)handler.removeCallbacks(tick);Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
         };handler.postDelayed(arm,350);
     }
     public void stop(){
