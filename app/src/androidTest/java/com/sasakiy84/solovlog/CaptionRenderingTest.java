@@ -43,7 +43,7 @@ public final class CaptionRenderingTest {
         List<File> files=new ArrayList<>();Transformer[] running=new Transformer[1];
         try{
             List<EditedMediaItem> items=new ArrayList<>();
-            Clip clip=new Clip("fixture",Instant.parse("2026-10-30T12:34:00Z").toEpochMilli(),2000,2,false,true,"UTC","Breakfast");
+            Clip clip=new Clip("fixture",Instant.parse("2026-10-30T12:34:00Z").toEpochMilli(),2000,2,false,true,"UTC","Breakfast").withPlace("Tokyo");
             for(int color:new int[]{Color.WHITE,Color.BLACK,Color.rgb(100,100,100)}){
                 File image=File.createTempFile("contrast-",".png",context.getCacheDir());files.add(image);
                 Bitmap bitmap=Bitmap.createBitmap(720,1280,Bitmap.Config.ARGB_8888);bitmap.eraseColor(color);
@@ -73,7 +73,8 @@ public final class CaptionRenderingTest {
                     values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);context.getContentResolver().update(image,values,null,null);
                     assertThat(CaptionColors.luminance(frame.getPixel(0,0))>.8).isEqualTo(bright);
                     assertInk(frame,bright,.03f,.03f,.8f,.2f,"background "+n+", day text"); // day text
-                    assertInk(frame,bright,.03f,.8f,.7f,.98f,"background "+n+", clip text"); // clip text
+                    assertInk(frame,bright,.03f,.92f,.7f,.98f,"background "+n+", clip text");
+                    assertInk(frame,bright,.03f,.86f,.7f,.92f,"background "+n+", place"); // clip text
                     assertInk(frame,bright,.7f,.8f,.98f,.98f,"background "+n+", clock"); // bottom-right clock
                     frame.recycle();
                 }

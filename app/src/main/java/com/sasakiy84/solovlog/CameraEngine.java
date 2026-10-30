@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Handler;
+import android.location.Location;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
@@ -98,14 +99,15 @@ public final class CameraEngine {
         front=!front;bound=false;bind(preview,horizontal,bindingListener);
     }
     public boolean busy(){return busy;}
-    public void start(File target,int seconds,boolean audio,Listener listener){
+    public void start(File target,int seconds,boolean audio,Location location,Listener listener){
         if(busy)return;busy=true;listener.progress(0,true);
         // Avoid including the physical tap in the saved clip.
         arm=()->{
             arm=null;
             try{
                 capturedAt=System.currentTimeMillis();
-                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).build());
+                FileOutputOptions.Builder options=new FileOutputOptions.Builder(target);if(location!=null)options.setLocation(location);
+                PendingRecording pending=recorder.prepareRecording(context,options.build());
                 if(audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled();
                 // If no first frame arrives, Start is never emitted; still allow recovery.
                 tick=()->{if(recording!=null)stop();};handler.postDelayed(tick,12000);

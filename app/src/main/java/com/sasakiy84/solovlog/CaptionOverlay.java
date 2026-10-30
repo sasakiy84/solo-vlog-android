@@ -43,7 +43,7 @@ final class CaptionOverlay implements GlEffect {
     private record Label(Bitmap mask,float x,float y){}
     private static Label[] labels(int w,int h,Clip clip,String day,boolean showTime){
         float edge=Math.min(w,h),marginX=w*.05f,marginY=h*.05f;
-        Label clock=null,heading=null,caption=null;
+        Label clock=null,heading=null,caption=null,place=null;
         float available=w*.9f;
         if(showTime){
             Bitmap mask=mask(JournalRules.captureTime(clip),edge*.034f,Math.round(available),1);
@@ -55,7 +55,11 @@ final class CaptionOverlay implements GlEffect {
             Bitmap mask=mask(clip.caption(),edge*.04f,Math.max(1,Math.round(available)),6);
             caption=new Label(mask,marginX,h-marginY-mask.getHeight());
         }
-        return new Label[]{heading,caption,clock};
+        if(!clip.place().isBlank()){
+            Bitmap mask=mask(clip.place(),edge*.032f,Math.max(1,Math.round(available)),2);
+            place=new Label(mask,marginX,h-marginY-mask.getHeight()-(caption==null?0:caption.mask().getHeight()+edge*.012f));
+        }
+        return new Label[]{heading,caption,place,clock};
     }
     private static Bitmap mask(String text,float size,int maxWidth,int maxLines){
         TextPaint paint=new TextPaint(Paint.ANTI_ALIAS_FLAG);paint.setTextSize(size);paint.setColor(Color.WHITE);
@@ -75,7 +79,7 @@ final class CaptionOverlay implements GlEffect {
         private final Clip clip;
         private final String day;
         private final boolean showTime;
-        private final int[] textures={-1,-1,-1};
+        private final int[] textures={-1,-1,-1,-1};
         Program(Context context,boolean hdr,Clip clip,String day,boolean showTime) throws VideoFrameProcessingException{
             super(hdr,1);this.clip=clip;this.day=day;this.showTime=showTime;
             try{
@@ -90,9 +94,9 @@ final class CaptionOverlay implements GlEffect {
         }
         @Override public Size configure(int width,int height) throws VideoFrameProcessingException{
             Label[] labels=labels(width,height,clip,day,showTime);
-            String[] names={"Day","Clip","Time"};
+            String[] names={"Day","Clip","Place","Time"};
             try{
-                for(int i=0;i<3;i++){
+                for(int i=0;i<4;i++){
                     if(textures[i]!=-1)GlUtil.deleteTexture(textures[i]);
                     Label label=labels[i];Bitmap bitmap=label==null?Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888):label.mask();
                     textures[i]=GlUtil.createTexture(bitmap.getWidth(),bitmap.getHeight(),false);GlUtil.setTexture(textures[i],bitmap);
@@ -133,7 +137,7 @@ final class CaptionOverlay implements GlEffect {
         void startProbing(VideoView video,File source,ExecutorService io){
             probe=new Runnable(){@Override public void run(){
                 if(!isAttachedToWindow()||io.isShutdown())return;
-                if(!pending&&(showTime||!day.isBlank()||!clip.caption().isBlank())){
+                if(!pending&&(showTime||!day.isBlank()||!clip.caption().isBlank()||!clip.place().isBlank())){
                     pending=true;long position=video.getCurrentPosition()*1000L;
                     io.execute(()->{
                         Bitmap frame=null;

@@ -3,9 +3,11 @@ uniform sampler2D uTexSampler;
 uniform sampler2D uDayMask;
 uniform sampler2D uClipMask;
 uniform sampler2D uTimeMask;
+uniform sampler2D uPlaceMask;
 uniform vec4 uDayRect;
 uniform vec4 uClipRect;
 uniform vec4 uTimeRect;
+uniform vec4 uPlaceRect;
 uniform vec3 uLumaWeights;
 uniform float uLumaThreshold;
 uniform float uLinearInput;
@@ -37,6 +39,7 @@ void main() {
   vec4 frame = texture2D(uTexSampler, vTexSamplingCoord);
   vec3 color = caption(frame.rgb, uDayMask, uDayRect);
   color = caption(color, uClipMask, uClipRect);
+  color = caption(color, uPlaceMask, uPlaceRect);
   color = caption(color, uTimeMask, uTimeRect);
   gl_FragColor = vec4(color, frame.a);
 }

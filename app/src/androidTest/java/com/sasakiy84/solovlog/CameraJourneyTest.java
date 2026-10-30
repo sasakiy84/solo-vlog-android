@@ -40,21 +40,12 @@ public final class CameraJourneyTest {
         while(true)try{description(value).click();return;}
         catch(StaleObjectException stale){if(SystemClock.elapsedRealtime()>=deadline)throw stale;device.waitForIdle();}
     }
-    private void screenshot(String name) throws Exception {
-        device.waitForIdle();
-        SystemClock.sleep(1500); // Wait for the compositor and asynchronous video thumbnails.
-        File folder=new File(context.getExternalFilesDir(null),"screenshots");folder.mkdirs();
-        File screenshot=new File(folder,name+".png");
-        assertThat(device.takeScreenshot(screenshot)).isTrue();
-        publishImage(screenshot,name);
-    }
-    private void publishImage(File screenshot,String name) throws Exception {
-        // AGP can uninstall the app after the test; shared MediaStore output survives that cleanup.
-        ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,name+".png");
-        values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/DaylogTestScreenshots");values.put(MediaStore.Images.Media.IS_PENDING,1);
-        Uri image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertThat(image).isNotNull();
-        try(FileInputStream source=new FileInputStream(screenshot);OutputStream target=context.getContentResolver().openOutputStream(image)){assertThat(target).isNotNull();source.transferTo(target);}
-        values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);context.getContentResolver().update(image,values,null,null);
+    private void screenshot(String name) throws Exception {DeviceImages.screenshot(context,device,name);}
+    private void publishImage(File file,String name) throws Exception {DeviceImages.publishFile(context,file,name);}
+    private void awaitCaption(String id,String caption){
+        long deadline=SystemClock.elapsedRealtime()+10000;
+        while(SystemClock.elapsedRealtime()<deadline){if(repository.all().stream().anyMatch(c->c.id().equals(id)&&c.caption().equals(caption)))return;SystemClock.sleep(100);}
+        assertThat(repository.all().stream().filter(c->c.id().equals(id)).findFirst().orElseThrow().caption()).isEqualTo(caption);
     }
     private Clip record(int duration) throws Exception {
         int count=repository.all().size();
@@ -76,7 +67,7 @@ public final class CameraJourneyTest {
     @Test public void captureExportAndChangeSettings() throws Exception {
         device.executeShellCommand("pm grant com.sasakiy84.solovlog android.permission.CAMERA");
         device.executeShellCommand("pm grant com.sasakiy84.solovlog android.permission.RECORD_AUDIO");
-        context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("sound",false).putBoolean("showTime",true).putInt("dayStart",240).commit();
+        context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("sound",false).putBoolean("showTime",true).putBoolean("postCaptureEdit",false).putBoolean("location",false).putInt("dayStart",240).commit();
         Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Clip two=record(2),three=record(3),five=record(5);
@@ -87,10 +78,10 @@ public final class CameraJourneyTest {
         device.findObject(By.res("android","button1")).click();text("京都旅行 1日目");
         String day=JournalRules.day(two.capturedAt(),240,ZoneId.of(two.zoneId())).toString();
         assertThat(repository.dayCaption(day)).isEqualTo("京都旅行 1日目");
-        UiObject2 first=device.wait(Until.findObject(By.descStartsWith("クリップを再生 ")),15000);assertThat(first).isNotNull();first.click();
+        UiObject2 first=device.wait(Until.findObject(By.desc("クリップを再生 "+JournalRules.captureTime(two)+" 2秒")),15000);assertThat(first).isNotNull();first.click();
         description("クリップのテキスト").setText("駅前で朝ごはん");screenshot("06-clip-text");
         device.findObject(By.res("android","button1")).click();
-        assertThat(repository.all().get(0).caption()).isEqualTo("駅前で朝ごはん");
+        awaitCaption(two.id(),"駅前で朝ごはん");
         screenshot("02-journal");
         UiObject2 save=device.wait(Until.findObject(By.text("動画を保存")),15000);assertThat(save).isNotNull();save.click();
         assertThat(device.wait(Until.hasObject(By.text("保存しました")),180000)).isTrue();
