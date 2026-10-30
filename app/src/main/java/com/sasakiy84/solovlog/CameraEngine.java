@@ -97,8 +97,7 @@ public final class CameraEngine {
             arm=null;
             try{
                 capturedAt=System.currentTimeMillis();
-                // Keep a little tail so the final selected length survives encoder/muxer latency.
-                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).setDurationLimitMillis(seconds*1000L+250).build());
+                PendingRecording pending=recorder.prepareRecording(context,new FileOutputOptions.Builder(target).build());
                 if(audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled();
                 recording=pending.start(ContextCompat.getMainExecutor(context),event->{
                     if(event instanceof VideoRecordEvent.Start){
@@ -111,6 +110,11 @@ public final class CameraEngine {
                                 if(SystemClock.elapsedRealtime()-started>seconds*1000L+8000)stop();else handler.postDelayed(this,40);
                             }
                         };handler.post(tick);
+                    }else if(event instanceof VideoRecordEvent.Status status){
+                        // Stats advance after encoded samples have been written to the muxer.
+                        // A duration upper limit can instead discard the last sparse frame too early.
+                        long neededNanos=(seconds*1000L+100)*1_000_000L;
+                        if(recording!=null&&status.getRecordingStats().getRecordedDurationNanos()>=neededNanos)stop();
                     }else if(event instanceof VideoRecordEvent.Finalize end){
                         if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;
                         if(!end.hasError()||end.getError()==VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED||end.getError()==VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE)listener.saved(target,capturedAt);
