@@ -29,6 +29,19 @@ final class MovieDraft {
     }
     private static File directory(Context context){File dir=new File(context.getFilesDir(),"rendered");if(!dir.isDirectory()&&!dir.mkdirs())throw new IllegalStateException("Cannot create render directory");return dir;}
     static long bytes(Context context){File[] files=directory(context).listFiles();if(files==null)return 0;long total=0;for(File file:files)if(file.isFile())total+=file.length();return total;}
+    static void deleteBefore(Context context,LocalDate cutoff){
+        File[] files=directory(context).listFiles((dir,name)->name.matches("[a-f0-9-]{36}\\.json"));
+        if(files==null)throw new IllegalStateException("レンダリング結果を確認できませんでした");
+        for(File file:files){
+            LocalDate day;
+            try{day=LocalDate.parse(new JSONObject(new String(new AtomicFile(file).readFully(),StandardCharsets.UTF_8)).getString("day"));}
+            catch(Exception e){android.util.Log.w("DaylogDraft","Cannot read old render date",e);continue;}
+            if(!day.isBefore(cutoff))continue;
+            File movie=new File(file.getParentFile(),file.getName().replace(".json",".mp4"));
+            if(movie.exists()&&!movie.delete())throw new IllegalStateException("レンダリング結果を削除できませんでした");
+            new AtomicFile(file).delete();if(file.exists())throw new IllegalStateException("レンダリング設定を削除できませんでした");
+        }
+    }
     File movie(Context context){return new File(directory(context),id+".mp4");}
     private AtomicFile metadata(Context context){return new AtomicFile(new File(directory(context),id+".json"));}
     static MovieDraft load(Context context,String id)throws Exception{

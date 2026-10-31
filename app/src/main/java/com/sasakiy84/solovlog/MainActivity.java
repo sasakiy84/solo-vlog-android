@@ -250,6 +250,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
+            @Override public void binding(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);if(zoomControls!=null)zoomControls.setAvailable(false);}}
             @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void zoomChanged(androidx.camera.core.ZoomState state){if(screen==Screen.CAMERA&&zoomControls!=null&&!isDestroyed())zoomControls.update(state);}
             @Override public void zoomError(String message){if(!isDestroyed())toast(message);}
@@ -432,9 +433,10 @@ public final class MainActivity extends ComponentActivity {
     private View clipCard(Clip clip){
         LinearLayout card=column();FrameLayout frame=new FrameLayout(this);frame.setBackground(Ui.rounded(this,Ui.CARD,10));frame.setClipToOutline(true);
         ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);frame.addView(image,new FrameLayout.LayoutParams(-1,-1));
-        frame.setContentDescription("クリップを再生 "+clipTime(clip)+" "+seconds(JournalRules.exportDuration(clip))+"秒");frame.setFocusable(true);frame.setOnClickListener(v->review(clip));card.addView(frame,lp(-1,journalLandscape?124:188));
+        frame.setContentDescription("クリップを選択 "+clipTime(clip)+" "+seconds(JournalRules.exportDuration(clip))+"秒");frame.setFocusable(true);frame.setOnClickListener(v->{repository.include(clip.id(),!clip.included());render();});card.addView(frame,lp(-1,journalLandscape?124:188));
+        frame.setOnLongClickListener(v->{review(clip);return true;});card.setOnLongClickListener(v->{review(clip);return true;});
         Ui.Icon check=new Ui.Icon(this,clip.included()?"check":"unchecked",Ui.INK,clip.included()?"このクリップを動画から除外":"このクリップを動画に含める",()->{repository.include(clip.id(),!clip.included());render();});
-        FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);frame.addView(check,cp);
+        FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);frame.addView(check,cp);check.setOnLongClickListener(v->{review(clip);return true;});
         gap(card,9);LinearLayout meta=row();meta.addView(bold(clipTime(clip),14,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));meta.addView(text(seconds(JournalRules.exportDuration(clip))+"s",12,Ui.MUTED));card.addView(meta);
         Bitmap cached=thumbnails.get(clip.id());
         if(cached!=null)image.setImageBitmap(cached);
@@ -517,7 +519,11 @@ public final class MainActivity extends ComponentActivity {
             @Override public void afterTextChanged(Editable s){}
         });
         gap(content,12);content.addView(button("トリミング","trim",false,()->{save.run();dialog.dismiss();trimEditor.launch(new Intent(this,ClipTrimActivity.class).putExtra("clip_id",clip.id()));}),lp(-1,48));
-        gap(content,12);content.addView(saveVideo,lp(-1,48));
+        gap(content,12);
+        LinearLayout audioRow=row();audioRow.addView(text("レンダリング音声",16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));
+        Switch renderAudio=new Switch(this);renderAudio.setContentDescription("レンダリング音声");renderAudio.setChecked(clip.renderAudio());audioRow.addView(renderAudio,lp(52,48));
+        renderAudio.setOnClickListener(view->{boolean enabled=renderAudio.isChecked();try{repository.renderAudio(clip.id(),enabled);edited[0]=edited[0].withRenderAudio(enabled);refreshPreview.run();}catch(RuntimeException e){toast("音声設定を保存できませんでした");renderAudio.setChecked(edited[0].renderAudio());}});
+        audioRow.setOnClickListener(v->renderAudio.performClick());content.addView(audioRow,lp(-1,56));gap(content,12);content.addView(saveVideo,lp(-1,48));
         dialog.setOnDismissListener(d->{
             main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.stop();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
             if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();resumeCamera();}}
@@ -608,11 +614,22 @@ public final class MainActivity extends ComponentActivity {
         }));gap(content,24);
         content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);
         content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",(repository.bytes()+MovieDraft.bytes(this))/1048576f),14,Ui.MUTED));gap(content,12);
+        content.addView(button("3日より前の動画を削除",false,this::deleteOldClips),lp(-1,48));gap(content,12);
         content.addView(text("アプリを削除すると、書き出していない動画も削除されます。",12,Ui.MUTED));
         gap(content,24);
         try{String version=getPackageManager().getPackageInfo(getPackageName(),0).versionName;LinearLayout versionRow=row();versionRow.setPadding(dp(4),dp(12),dp(4),dp(12));TextView label=text("バージョン",16,Ui.INK);label.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(label,new LinearLayout.LayoutParams(0,dp(40),1));TextView value=text(version==null?"—":version,15,Ui.MUTED);value.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(value,lp(-2,40));content.addView(versionRow);}
         catch(android.content.pm.PackageManager.NameNotFoundException e){android.util.Log.w("Daylog","Version unavailable",e);}
 
+    }
+    private void deleteOldClips(){
+        if(RenderService.activeId!=null){toast("レンダリングが終わってから削除してください");return;}
+        LocalDate cutoff=today().minusDays(3);int dayBoundary=boundary();
+        new AlertDialog.Builder(this).setTitle("3日より前の動画を削除しますか？")
+            .setMessage(cutoff.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))+"より前のクリップとレンダリング結果を削除します。端末に保存した動画は残ります。")
+            .setNegativeButton("キャンセル",null).setPositiveButton("削除",(dialog,which)->{
+                if(RenderService.activeId!=null){toast("レンダリングが終わってから削除してください");return;}
+                io.execute(()->{try{int deleted=repository.deleteBefore(cutoff,dayBoundary);MovieDraft.deleteBefore(MainActivity.this,cutoff);thumbnails.evictAll();main.post(()->{if(!isDestroyed()){toast(deleted+"本を削除しました");if(screen==Screen.SETTINGS)renderSettingsBody();}});}catch(RuntimeException e){android.util.Log.w("Daylog","Old clips could not be deleted",e);main.post(()->{if(!isDestroyed()){toast("一部の動画を削除できませんでした");if(screen==Screen.SETTINGS)renderSettingsBody();}});}});
+            }).show();
     }
     private LinearLayout preferenceRow(String title,String value){
         LinearLayout item=row();item.setPadding(dp(4),dp(12),dp(4),dp(12));Ui.touch(item,Ui.BG,8);

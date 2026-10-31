@@ -27,6 +27,7 @@ public final class ClipRepository extends SQLiteOpenHelper {
 
     @Override public void onOpen(SQLiteDatabase db){
         super.onOpen(db);
+        db.execSQL("CREATE TABLE IF NOT EXISTS clip_audio (clip_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE IF NOT EXISTS clip_trims (clip_id TEXT PRIMARY KEY, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL)");
     }
     public void trim(Clip clip){
@@ -64,12 +65,12 @@ public final class ClipRepository extends SQLiteOpenHelper {
     }
     public List<Clip> all() {
         List<Clip> clips = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT c.*, t.start_ms, t.end_ms FROM clips c LEFT JOIN clip_trims t ON t.clip_id=c.id ORDER BY c.captured_at ASC",null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT c.*, t.start_ms, t.end_ms, a.enabled FROM clips c LEFT JOIN clip_trims t ON t.clip_id=c.id LEFT JOIN clip_audio a ON a.clip_id=c.id ORDER BY c.captured_at ASC",null)) {
             while(c.moveToNext()){
                 Clip clip=new Clip(c.getString(0),c.getLong(1),c.getLong(2),c.getInt(3),c.getInt(4)!=0,c.getInt(5)!=0,c.getString(6),c.getString(7))
                     .withLocation(c.isNull(8)||c.isNull(9)?null:new GeoPoint(c.getDouble(8),c.getDouble(9),c.isNull(10)?0:c.getFloat(10))).withPlace(c.getString(11));
                 if(!c.isNull(13))clip=clip.withTrim(c.getLong(13),c.getLong(14));
-                clips.add(clip);
+                clips.add(clip.withRenderAudio(c.isNull(15)||c.getInt(15)!=0));
             }
         }
         return clips;
@@ -125,7 +126,18 @@ public final class ClipRepository extends SQLiteOpenHelper {
         File target = file(id);
         if (target.exists() && !target.delete()) throw new IllegalStateException("動画を削除できませんでした");
         getWritableDatabase().delete("clip_trims","clip_id=?",new String[]{id});
+        getWritableDatabase().delete("clip_audio","clip_id=?",new String[]{id});
         getWritableDatabase().delete("clips", "id=?", new String[]{id});
+    }
+    public void renderAudio(String id,boolean enabled){
+        ContentValues values=new ContentValues();values.put("clip_id",id);values.put("enabled",enabled?1:0);
+        if(getWritableDatabase().insertWithOnConflict("clip_audio",null,values,SQLiteDatabase.CONFLICT_REPLACE)==-1)throw new IllegalStateException("音声設定を保存できませんでした");
+    }
+    public synchronized int deleteBefore(java.time.LocalDate cutoff,int boundary){
+        int count=0;
+        for(Clip clip:all())if(JournalRules.day(clip.capturedAt(),boundary,java.time.ZoneId.of(clip.zoneId())).isBefore(cutoff)){delete(clip.id());count++;}
+        getWritableDatabase().delete("day_captions","day < ?",new String[]{cutoff.toString()});
+        return count;
     }
     public long bytes() { return all().stream().mapToLong(c -> file(c.id()).length()).sum(); }
 }

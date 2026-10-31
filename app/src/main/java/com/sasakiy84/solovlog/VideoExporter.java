@@ -68,7 +68,7 @@ public final class VideoExporter {
                     }
                     MediaItem item=new MediaItem.Builder().setUri(Uri.fromFile(source))
                         .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build();
-                    EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio);
+                    EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio||!clip.renderAudio());
                     if(!dayCaption.isBlank()||showTime||showDate||!clip.caption().isBlank()||!clip.place().isBlank())
                         edited.setEffects(new Effects(List.of(),List.of(CaptionOverlay.prepare(context,source,clip,dayCaption,showTime,showDate))));
                     items.add(edited.build());

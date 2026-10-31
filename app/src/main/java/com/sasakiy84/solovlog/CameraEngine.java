@@ -12,6 +12,7 @@ import android.util.Range;
 import android.util.Rational;
 import android.view.Surface;
 import androidx.camera.core.Camera;
+import androidx.camera.camera2.interop.Camera2Interop;
 import androidx.camera.core.CameraControl;
 import androidx.camera.core.ZoomState;
 import androidx.camera.core.CameraInfo;
@@ -40,6 +41,7 @@ import java.io.File;
 public final class CameraEngine {
     public interface Listener {
         void ready();
+        default void binding() {}
         default void zoomChanged(ZoomState state) {}
         default void zoomError(String message) {}
         void progress(float fraction, boolean stabilizing);
@@ -53,6 +55,8 @@ public final class CameraEngine {
     private String actualQuality,requestedQuality;
     private ProcessCameraProvider provider;
     private Camera boundCamera;
+    private CameraLenses lenses;
+    private CameraLenses.Lens activeLens;
     private androidx.lifecycle.Observer<ZoomState> zoomObserver;
     private float requestedZoom=1;
     private int zoomRequest;
@@ -68,7 +72,7 @@ public final class CameraEngine {
     public CameraEngine(Context context,LifecycleOwner owner){this.context=context;this.owner=owner;}
     public void bind(PreviewView target,boolean landscape,Listener listener){
         if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
-        preview=target;horizontal=landscape;bindingListener=listener;
+        preview=target;horizontal=landscape;bindingListener=listener;listener.binding();
         target.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         target.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         var future=ProcessCameraProvider.getInstance(context);
@@ -83,6 +87,8 @@ public final class CameraEngine {
                     if(!provider.hasCamera(selector))throw new IllegalStateException("No available camera");
                     front=!front;
                 }
+                if(lenses==null)lenses=CameraLenses.discover(provider,selector,front);
+                activeLens=lenses.forRatio(requestedZoom);selector=activeLens.selector();
                 CameraInfo info=provider.getCameraInfo(selector);
                 String requested=context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto");
                 java.util.List<Quality> order=switch(requested){
@@ -91,19 +97,25 @@ public final class CameraEngine {
                     default->java.util.List.of(Quality.UHD,Quality.FHD,Quality.HD,Quality.SD);
                 };
                 java.util.List<Quality> supported=Recorder.getVideoCapabilities(info).getSupportedQualities(DynamicRange.SDR);
-                Quality selected=order.stream().filter(supported::contains).findFirst().orElseThrow(()->new IllegalStateException("No recording quality"));
+                Quality selected=order.stream().filter(supported::contains).filter(activeLens::supports).findFirst().orElseThrow(()->new IllegalStateException("No recording quality"));
                 requestedQuality=requested;
                 actualQuality=selected==Quality.UHD?"4K":selected==Quality.FHD?"1080p":selected==Quality.HD?"720p":"480p";
                 recorder=new Recorder.Builder().setQualitySelector(QualitySelector.from(selected,FallbackStrategy.lowerQualityOrHigherThan(selected)))
                     .setTargetVideoEncodingBitRate(selected==Quality.UHD?60_000_000:selected==Quality.FHD?24_000_000:selected==Quality.HD?12_000_000:4_000_000).build();
                 int rotation=JournalRules.targetRotation(info.getSensorRotationDegrees(Surface.ROTATION_0),landscape);
-                Preview viewfinder=new Preview.Builder().setTargetRotation(rotation).build();
+                Preview.Builder previewBuilder=new Preview.Builder().setTargetRotation(rotation);
+                VideoCapture.Builder<Recorder> videoBuilder=new VideoCapture.Builder<>(recorder).setTargetRotation(rotation).setTargetFrameRate(new Range<>(30,30));
+                if(activeLens.physicalId()!=null){
+                    new Camera2Interop.Extender<>(previewBuilder).setPhysicalCameraId(activeLens.physicalId());
+                    new Camera2Interop.Extender<>(videoBuilder).setPhysicalCameraId(activeLens.physicalId());
+                }
+                Preview viewfinder=previewBuilder.build();
                 viewfinder.setSurfaceProvider(target.getSurfaceProvider());
-                VideoCapture<Recorder> video=new VideoCapture.Builder<>(recorder).setTargetRotation(rotation).setTargetFrameRate(new Range<>(30,30)).build();
+                VideoCapture<Recorder> video=videoBuilder.build();
                 ViewPort viewport=new ViewPort.Builder(new Rational(landscape?16:9,landscape?9:16),rotation).setScaleType(ViewPort.FILL_CENTER).build();
                 Camera camera=provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
                 boundCamera=camera;boundPreview=viewfinder;boundVideo=video;bound=true;
-                zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(state);};
+                zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));};
                 camera.getCameraInfo().getZoomState().observe(owner,zoomObserver);
                 setZoom(requestedZoom);listener.ready();
             }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
@@ -123,14 +135,16 @@ public final class CameraEngine {
         CameraSelector next=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
         try { if(!provider.hasCamera(next))throw new IllegalStateException("Camera unavailable"); }
         catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
-        front=!front;requestedZoom=1;bound=false;bind(preview,horizontal,bindingListener);
+        front=!front;lenses=null;requestedZoom=1;bound=false;bind(preview,horizontal,bindingListener);
     }
     public void setZoom(float ratio){
         Camera camera=boundCamera;if(camera==null||!bound||!Float.isFinite(ratio))return;
+        if(!busy&&lenses.forRatio(ratio)!=activeLens){requestedZoom=ratio;bound=false;bind(preview,horizontal,bindingListener);return;}
         ZoomState state=camera.getCameraInfo().getZoomState().getValue();if(state==null)return;
-        requestedZoom=Math.max(state.getMinZoomRatio(),Math.min(state.getMaxZoomRatio(),ratio));
-        if(Math.abs(state.getZoomRatio()-requestedZoom)<.0001f)return;
-        int request=++zoomRequest;var result=camera.getCameraControl().setZoomRatio(requestedZoom);
+        float scale=activeLens.scale();
+        requestedZoom=Math.max(state.getMinZoomRatio(),Math.min(state.getMaxZoomRatio(),ratio/scale))*scale;
+        if(Math.abs(state.getZoomRatio()-requestedZoom/scale)<.0001f)return;
+        int request=++zoomRequest;var result=camera.getCameraControl().setZoomRatio(requestedZoom/scale);
         result.addListener(()->{
             if(request!=zoomRequest||boundCamera!=camera)return;
             try{result.get();}
@@ -140,15 +154,19 @@ public final class CameraEngine {
                 if(e.getCause() instanceof CameraControl.OperationCanceledException)return;
                 Log.w("DaylogCamera","Zoom could not be applied",e.getCause());
                 ZoomState current=camera.getCameraInfo().getZoomState().getValue();
-                if(current!=null){requestedZoom=current.getZoomRatio();bindingListener.zoomChanged(current);}
+                if(current!=null){requestedZoom=current.getZoomRatio()*activeLens.scale();bindingListener.zoomChanged(lenses.displayed(current,activeLens,busy));}
                 bindingListener.zoomError("倍率を変更できませんでした");
             }
         },ContextCompat.getMainExecutor(context));
     }
+    private void publishZoom(){
+        if(boundCamera==null||lenses==null)return;ZoomState state=boundCamera.getCameraInfo().getZoomState().getValue();
+        if(state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));
+    }
     public String actualQuality(){return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
     public boolean busy(){return busy;}
     public void start(File target,int seconds,boolean audio,Location location,Listener listener){
-        if(busy)return;busy=true;listener.progress(0,true);
+        if(busy||!bound)return;busy=true;publishZoom();listener.progress(0,true);
         // Avoid including the physical tap in the saved clip.
         arm=()->{
             arm=null;
@@ -177,17 +195,17 @@ public final class CameraEngine {
                         long neededNanos=(seconds*1000L+100)*1_000_000L;
                         if(recording!=null&&status.getRecordingStats().getRecordedDurationNanos()>=neededNanos)stop();
                     }else if(event instanceof VideoRecordEvent.Finalize end){
-                        if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;
+                        if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;publishZoom();
                         if(!end.hasError()||end.getError()==VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED||end.getError()==VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE)listener.saved(target,capturedAt);
                         else{Log.e("DaylogCamera","Recording failed, code="+end.getError(),end.getCause());target.delete();listener.error("撮影を保存できませんでした。空き容量とカメラの状態を確認してください。");}
                     }
                 });
-            }catch(SecurityException e){if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
-            catch(RuntimeException e){if(tick!=null)handler.removeCallbacks(tick);Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
+            }catch(SecurityException e){if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;publishZoom();target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
+            catch(RuntimeException e){if(tick!=null)handler.removeCallbacks(tick);Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;publishZoom();target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
         };handler.postDelayed(arm,500);
     }
     public void stop(){
         if(recording!=null){if(tick!=null)handler.removeCallbacks(tick);recording.stop();}
-        if(arm!=null){handler.removeCallbacks(arm);arm=null;busy=false;}
+        if(arm!=null){handler.removeCallbacks(arm);arm=null;busy=false;publishZoom();}
     }
 }
