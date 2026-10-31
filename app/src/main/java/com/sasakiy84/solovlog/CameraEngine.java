@@ -12,6 +12,7 @@ import android.util.Range;
 import android.util.Rational;
 import android.view.Surface;
 import androidx.camera.core.CameraInfo;
+import androidx.camera.core.DynamicRange;
 import androidx.camera.core.CameraInfoUnavailableException;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.Preview;
@@ -43,8 +44,8 @@ public final class CameraEngine {
     private final Context context;
     private final LifecycleOwner owner;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private final Recorder recorder=new Recorder.Builder().setQualitySelector(
-        QualitySelector.from(Quality.FHD,FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD))).build();
+    private Recorder recorder;
+    private String actualQuality,requestedQuality;
     private ProcessCameraProvider provider;
     private Preview boundPreview;
     private VideoCapture<Recorder> boundVideo;
@@ -74,6 +75,18 @@ public final class CameraEngine {
                     front=!front;
                 }
                 CameraInfo info=provider.getCameraInfo(selector);
+                String requested=context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto");
+                java.util.List<Quality> order=switch(requested){
+                    case "fhd"->java.util.List.of(Quality.FHD,Quality.HD,Quality.SD,Quality.UHD);
+                    case "hd"->java.util.List.of(Quality.HD,Quality.SD,Quality.FHD,Quality.UHD);
+                    default->java.util.List.of(Quality.UHD,Quality.FHD,Quality.HD,Quality.SD);
+                };
+                java.util.List<Quality> supported=Recorder.getVideoCapabilities(info).getSupportedQualities(DynamicRange.SDR);
+                Quality selected=order.stream().filter(supported::contains).findFirst().orElseThrow(()->new IllegalStateException("No recording quality"));
+                requestedQuality=requested;
+                actualQuality=selected==Quality.UHD?"4K":selected==Quality.FHD?"1080p":selected==Quality.HD?"720p":"480p";
+                recorder=new Recorder.Builder().setQualitySelector(QualitySelector.from(selected,FallbackStrategy.lowerQualityOrHigherThan(selected)))
+                    .setTargetVideoEncodingBitRate(selected==Quality.UHD?60_000_000:selected==Quality.FHD?24_000_000:selected==Quality.HD?12_000_000:4_000_000).build();
                 int rotation=JournalRules.targetRotation(info.getSensorRotationDegrees(Surface.ROTATION_0),landscape);
                 Preview viewfinder=new Preview.Builder().setTargetRotation(rotation).build();
                 viewfinder.setSurfaceProvider(target.getSurfaceProvider());
@@ -98,6 +111,7 @@ public final class CameraEngine {
         catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
         front=!front;bound=false;bind(preview,horizontal,bindingListener);
     }
+    public String actualQuality(){return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
     public boolean busy(){return busy;}
     public void start(File target,int seconds,boolean audio,Location location,Listener listener){
         if(busy)return;busy=true;listener.progress(0,true);

@@ -10,8 +10,6 @@ import android.graphics.PorterDuffColorFilter;
 import android.graphics.Typeface;
 import android.media.MediaMetadataRetriever;
 import android.opengl.GLES20;
-import android.os.Handler;
-import android.os.Looper;
 import android.text.Layout;
 import android.text.StaticLayout;
 import android.text.TextPaint;
@@ -30,33 +28,34 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 
-/** Compact text masks share layout with previews; export ink is chosen from every video frame. */
+/** Preview and export share masks and one stable ink choice per label and clip. */
 @UnstableApi
 final class CaptionOverlay implements GlEffect {
+    private final File source;
     private final Clip clip;
     private final String day;
     private final boolean showTime;
-    CaptionOverlay(Clip clip,String day,boolean showTime){this.clip=clip;this.day=day;this.showTime=showTime;}
+    CaptionOverlay(File source,Clip clip,String day,boolean showTime){this.source=source;this.clip=clip;this.day=day;this.showTime=showTime;}
     @Override public GlShaderProgram toGlShaderProgram(Context context,boolean useHdr) throws VideoFrameProcessingException{
-        return new Program(context,useHdr,clip,day,showTime);
+        return new Program(context,useHdr,source,clip,day,showTime);
     }
     private record Label(Bitmap mask,float x,float y){}
-    private static Label[] labels(int w,int h,Clip clip,String day,boolean showTime){
+    private static Label[] labels(Context context,int w,int h,Clip clip,String day,boolean showTime){
         float edge=Math.min(w,h),marginX=w*.05f,marginY=h*.05f;
         Label clock=null,heading=null,caption=null,place=null;
         float available=w*.9f;
         if(showTime){
-            Bitmap mask=mask(JournalRules.captureTime(clip),edge*.034f,Math.round(available),1);
+            Bitmap mask=mask(JournalRules.captureTime(clip),edge*.051f,Math.round(available),1);
             clock=new Label(mask,w-marginX-mask.getWidth(),h-marginY-mask.getHeight());
             available-=mask.getWidth()+edge*.04f;
         }
-        if(!day.isBlank())heading=new Label(mask(day,edge*.038f,Math.round(w*.9f),3),marginX,marginY);
+        if(!day.isBlank())heading=new Label(mask(day,edge*.057f,Math.round(w*.9f),3),marginX,marginY);
         if(!clip.caption().isBlank()){
-            Bitmap mask=mask(clip.caption(),edge*.04f,Math.max(1,Math.round(available)),6);
+            Bitmap mask=mask(clip.caption(),edge*.06f,Math.max(1,Math.round(available)),6);
             caption=new Label(mask,marginX,h-marginY-mask.getHeight());
         }
         if(!clip.place().isBlank()){
-            Bitmap mask=mask(clip.place(),edge*.032f,Math.max(1,Math.round(available)),2);
+            Bitmap mask=placeMask(context,clip.place(),edge*.048f,Math.max(1,Math.round(available)));
             place=new Label(mask,marginX,h-marginY-mask.getHeight()-(caption==null?0:caption.mask().getHeight()+edge*.012f));
         }
         return new Label[]{heading,caption,place,clock};
@@ -72,29 +71,74 @@ final class CaptionOverlay implements GlEffect {
         Bitmap bitmap=Bitmap.createBitmap(Math.min(maxWidth,(int)Math.ceil(width)+padding*2),Math.max(1,layout.getHeight()+padding*2),Bitmap.Config.ARGB_8888);
         Canvas canvas=new Canvas(bitmap);canvas.translate(padding,padding);layout.draw(canvas);return bitmap;
     }
+    private static Bitmap placeMask(Context context,String text,float size,int maxWidth){
+        int iconSize=Math.max(1,Math.round(size*1.1f)),gap=Math.max(1,Math.round(size*.25f));
+        Bitmap words=mask(text,size,Math.max(1,maxWidth-iconSize-gap),2);
+        Bitmap bitmap=Bitmap.createBitmap(Math.min(maxWidth,words.getWidth()+iconSize+gap),Math.max(words.getHeight(),iconSize),Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(bitmap);float top=(bitmap.getHeight()-iconSize)/2f;
+        android.graphics.drawable.Drawable pin=Ui.drawable(context,"pin",Color.WHITE);
+        pin.setBounds(0,Math.round(top),iconSize,Math.round(top)+iconSize);pin.draw(canvas);
+        canvas.drawBitmap(words,iconSize+gap,(bitmap.getHeight()-words.getHeight())/2f,null);words.recycle();return bitmap;
+    }
+    private static Bitmap[] sampleFrames(File source,Clip clip){
+        Bitmap[] frames=new Bitmap[3];
+        try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
+            media.setDataSource(source.getAbsolutePath());
+            long duration=JournalRules.exportDuration(clip)*1000L;
+            for(int i=0;i<frames.length;i++)frames[i]=media.getScaledFrameAtTime(duration*(i*4+1)/10,MediaMetadataRetriever.OPTION_CLOSEST,clip.landscape()?320:180,clip.landscape()?180:320);
+        }catch(Exception e){android.util.Log.w("DaylogCaptions","Clip color samples unavailable",e);}
+        return frames;
+    }
+    private static void recycleFrames(Bitmap[] frames){if(frames!=null)for(Bitmap frame:frames)if(frame!=null)frame.recycle();}
+    private static float[] inks(Label[] labels,Bitmap[] frames,int width,int height){
+        float[] colors={1,1,1,1};
+        if(frames==null)return colors;
+        for(int i=0;i<labels.length;i++){
+            Label label=labels[i];if(label==null)continue;
+            double darkest=1;int samples=0;
+            for(Bitmap frame:frames)if(frame!=null){
+                double luminance=0;
+                for(int y=0;y<3;y++)for(int x=0;x<5;x++){
+                    int px=Math.max(0,Math.min(frame.getWidth()-1,(int)((label.x()+label.mask().getWidth()*(x+.5f)/5)*frame.getWidth()/width)));
+                    int py=Math.max(0,Math.min(frame.getHeight()-1,(int)((label.y()+label.mask().getHeight()*(y+.5f)/3)*frame.getHeight()/height)));
+                    luminance+=CaptionColors.luminance(frame.getPixel(px,py));
+                }
+                darkest=Math.min(darkest,luminance/15);samples++;
+            }
+            if(samples==3&&CaptionColors.darkInk(darkest))colors[i]=0;
+        }
+        return colors;
+    }
+    private static float[] clipInks(Context context,Clip clip,String day,boolean showTime,Bitmap[] frames){
+        int width=clip.landscape()?1920:1080,height=clip.landscape()?1080:1920;
+        Label[] reference=labels(context,width,height,clip,day,showTime);
+        try{return inks(reference,frames,width,height);}finally{recycle(reference);}
+    }
     private static void recycle(Label[] labels){if(labels!=null)for(Label label:labels)if(label!=null)label.mask().recycle();}
 
     private static final class Program extends BaseGlShaderProgram {
         private final GlProgram program;
+        private final Context context;
+        private final File source;
         private final Clip clip;
         private final String day;
         private final boolean showTime;
         private final int[] textures={-1,-1,-1,-1};
-        Program(Context context,boolean hdr,Clip clip,String day,boolean showTime) throws VideoFrameProcessingException{
-            super(hdr,1);this.clip=clip;this.day=day;this.showTime=showTime;
+        Program(Context context,boolean hdr,File source,Clip clip,String day,boolean showTime) throws VideoFrameProcessingException{
+            super(hdr,1);this.context=context;this.source=source;this.clip=clip;this.day=day;this.showTime=showTime;
             try{
                 program=new GlProgram(context,"shaders/vertex_shader_transformation_es2.glsl","shaders/captions.glsl");
                 program.setBufferAttribute("aFramePosition",GlUtil.getNormalizedCoordinateBounds(),GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE);
                 program.setFloatsUniform("uTransformationMatrix",GlUtil.create4x4IdentityMatrix());
                 program.setFloatsUniform("uTexTransformationMatrix",GlUtil.create4x4IdentityMatrix());
-                program.setFloatsUniform("uLumaWeights",hdr?new float[]{.2627f,.6780f,.0593f}:new float[]{.2126f,.7152f,.0722f});
-                program.setFloatUniform("uLumaThreshold",CaptionColors.BLACK_INK_THRESHOLD);
-                program.setFloatUniform("uLinearInput",hdr?1f:0f);
             }catch(IOException|GlUtil.GlException e){throw new VideoFrameProcessingException(e);}
         }
         @Override public Size configure(int width,int height) throws VideoFrameProcessingException{
-            Label[] labels=labels(width,height,clip,day,showTime);
+            Label[] labels=labels(context,width,height,clip,day,showTime);
             String[] names={"Day","Clip","Place","Time"};
+            Bitmap[] frames=sampleFrames(source,clip);
+            program.setFloatsUniform("uInkColors",clipInks(context,clip,day,showTime,frames));
+            recycleFrames(frames);
             try{
                 for(int i=0;i<4;i++){
                     if(textures[i]!=-1)GlUtil.deleteTexture(textures[i]);
@@ -124,51 +168,37 @@ final class CaptionOverlay implements GlEffect {
     static final class Preview extends View {
         private Clip clip;
         private String day;
-        private boolean showTime,pending;
+        private boolean showTime;
         private Label[] labels;
-        private Bitmap background;
+        private Bitmap[] backgrounds;
+        private float[] colors;
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Handler main=new Handler(Looper.getMainLooper());
-        private Runnable probe;
+        private int sourceGeneration;
         Preview(Context context,Clip clip,String day,boolean showTime){
             super(context);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);update(clip,day,showTime);
         }
-        void update(Clip clip,String day,boolean showTime){this.clip=clip;this.day=day;this.showTime=showTime;clearLabels();invalidate();}
-        void startProbing(VideoView video,File source,ExecutorService io){
-            probe=new Runnable(){@Override public void run(){
-                if(!isAttachedToWindow()||io.isShutdown())return;
-                if(!pending&&getVisibility()==VISIBLE&&getWindowVisibility()==VISIBLE&&(showTime||!day.isBlank()||!clip.caption().isBlank()||!clip.place().isBlank())){
-                    pending=true;long position=video.getCurrentPosition()*1000L;
-                    io.execute(()->{
-                        Bitmap frame=null;
-                        try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
-                            media.setDataSource(source.getAbsolutePath());frame=media.getScaledFrameAtTime(position,MediaMetadataRetriever.OPTION_CLOSEST,clip.landscape()?320:180,clip.landscape()?180:320);
-                        }catch(Exception e){android.util.Log.w("DaylogCaptions","Preview frame unavailable",e);}
-                        Bitmap result=frame;main.post(()->{pending=false;if(!isAttachedToWindow()){if(result!=null)result.recycle();return;}if(background!=null)background.recycle();background=result;invalidate();});
-                    });
-                }
-                main.postDelayed(this,500);
-            }};post(probe);
+        void update(Clip clip,String day,boolean showTime){
+            if(this.clip!=null&&this.clip.equals(clip)&&this.day.equals(day)&&this.showTime==showTime)return;
+            this.clip=clip;this.day=day;this.showTime=showTime;clearLabels();invalidate();
         }
-        private void clearLabels(){recycle(labels);labels=null;}
+        void startProbing(VideoView video,File source,ExecutorService io){
+            int generation=++sourceGeneration;Clip sampledClip=clip;setAlpha(0f);
+            io.execute(()->{
+                Bitmap[] frames=sampleFrames(source,sampledClip);
+                post(()->{if(generation!=sourceGeneration){recycleFrames(frames);return;}recycleFrames(backgrounds);backgrounds=frames;colors=null;setAlpha(1f);invalidate();});
+            });
+        }
+        private void clearLabels(){recycle(labels);labels=null;colors=null;}
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){clearLabels();}
-        @Override protected void onDetachedFromWindow(){clearLabels();if(probe!=null)main.removeCallbacks(probe);if(background!=null){background.recycle();background=null;}super.onDetachedFromWindow();}
+        @Override protected void onDetachedFromWindow(){sourceGeneration++;clearLabels();recycleFrames(backgrounds);backgrounds=null;super.onDetachedFromWindow();}
         @Override protected void onDraw(Canvas canvas){
             if(getWidth()==0||getHeight()==0)return;
-            if(labels==null)labels=labels(getWidth(),getHeight(),clip,day,showTime);
-            for(Label label:labels)if(label!=null){
-                double luminance=0;
-                if(background!=null){
-                    for(int y=0;y<3;y++)for(int x=0;x<5;x++){
-                        int px=Math.max(0,Math.min(background.getWidth()-1,(int)((label.x()+label.mask().getWidth()*(x+.5f)/5)*background.getWidth()/getWidth())));
-                        int py=Math.max(0,Math.min(background.getHeight()-1,(int)((label.y()+label.mask().getHeight()*(y+.5f)/3)*background.getHeight()/getHeight())));
-                        luminance+=CaptionColors.luminance(background.getPixel(px,py));
-                    }
-                    luminance/=15;
-                }
-                paint.setColorFilter(new PorterDuffColorFilter(CaptionColors.darkInk(luminance)?Color.BLACK:Color.WHITE,PorterDuff.Mode.SRC_IN));
+            if(labels==null)labels=labels(getContext(),getWidth(),getHeight(),clip,day,showTime);
+            if(colors==null)colors=clipInks(getContext(),clip,day,showTime,backgrounds);
+            for(int i=0;i<labels.length;i++){Label label=labels[i];if(label!=null){
+                paint.setColorFilter(new PorterDuffColorFilter(colors[i]==0?Color.BLACK:Color.WHITE,PorterDuff.Mode.SRC_IN));
                 canvas.drawBitmap(label.mask(),label.x(),label.y(),paint);
-            }
+            }}
         }
     }
 }

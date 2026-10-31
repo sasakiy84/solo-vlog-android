@@ -33,7 +33,7 @@ final class MovieJourney {
             long deadline=SystemClock.elapsedRealtime()+180000;MovieDraft draft=MovieDraft.load(context,id);
             while("rendering".equals(draft.status)&&SystemClock.elapsedRealtime()<deadline){SystemClock.sleep(250);draft=MovieDraft.load(context,id);}
             assertThat(draft.status).isEqualTo("ready");assertThat(draft.movie(context).isFile()).isTrue();assertThat(count(context)).isEqualTo(before);
-            find(device,"動画を調整").click();
+            find(device,"レンダリング").click();
         }
         assertThat(device.wait(Until.hasObject(By.text("レンダリング完了")),180000)).isTrue();assertThat(count(context)).isEqualTo(before);
         DeviceImages.screenshot(context,device,"15-"+label+"-preview");

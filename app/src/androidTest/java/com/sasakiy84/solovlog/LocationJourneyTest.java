@@ -143,7 +143,7 @@ public final class LocationJourneyTest {
             }
             selectPlace(clip(first.id()).location().label());await(()->!clip(first.id()).place().isEmpty());
             place("東京駅");await(()->clip(first.id()).place().equals("東京駅"));DeviceImages.screenshot(context,device,"10-post-capture-editor");
-            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"10a-edits-saved-journal");click(By.descStartsWith("クリップを再生 "));click(By.text("動画を調整"));saved();
+            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"10a-edits-saved-journal");click(By.descStartsWith("クリップを再生 "));click(By.text("レンダリング"));saved();
             Uri individual=latestVideo();
             try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){
                 metadata.setDataSource(context,individual);assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)).isNotNull();
@@ -156,7 +156,7 @@ public final class LocationJourneyTest {
             mockFix(manager,34.985849,135.758767);
             Clip third=record(2);await(()->clip(third.id()).location()!=null);assertThat(clip(third.id()).location().distanceMeters(clip(first.id()).location())).isGreaterThan(300000);
             assertThat(device.hasObject(By.desc("場所を表示 東京駅"))).isFalse();place("京都駅");find(By.desc("クリップのテキスト")).setText("京都に到着");await(()->clip(third.id()).caption().equals("京都に到着"));
-            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"11a-trip-journal");click(By.text("動画を調整"));saved();Uri daily=latestVideo();
+            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"11a-trip-journal");click(By.text("レンダリング"));saved();Uri daily=latestVideo();
             List<Clip> trip=List.of(clip(first.id()),clip(second.id()),clip(third.id()));
             try(InputStream input=context.getContentResolver().openInputStream(daily)){
                 assertThat(input).isNotNull();String container=new String(input.readAllBytes(),StandardCharsets.UTF_8);

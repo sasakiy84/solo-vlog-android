@@ -51,7 +51,7 @@ public final class VideoExporter {
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build();
             EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio);
             if(!dayCaption.isBlank()||showTime||!clip.caption().isBlank()||!clip.place().isBlank())
-                edited.setEffects(new Effects(List.of(),List.of(new CaptionOverlay(clip,dayCaption,showTime))));
+                edited.setEffects(new Effects(List.of(),List.of(new CaptionOverlay(repository.file(clip.id()),clip,dayCaption,showTime))));
             items.add(edited.build());
         }
         EditedMediaItemSequence sequence = new EditedMediaItemSequence.Builder(items).experimentalSetForceAudioTrack(true).build();

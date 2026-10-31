@@ -56,7 +56,7 @@ final class Ui {
     }
     static final class Shutter extends View {
         private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);private boolean recording,white;private float progress;
-        Shutter(Context c){super(c);setFocusable(true);setContentDescription("3秒撮影");}
+        Shutter(Context c){super(c);setFocusable(true);setContentDescription("2秒撮影");}
         void white(boolean enabled){white=enabled;invalidate();}
         void state(boolean active,float fraction,int seconds){recording=active;progress=fraction;setContentDescription(active?"撮影を停止":seconds+"秒撮影");invalidate();}
         @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo i){super.onInitializeAccessibilityNodeInfo(i);i.setClassName("android.widget.Button");}

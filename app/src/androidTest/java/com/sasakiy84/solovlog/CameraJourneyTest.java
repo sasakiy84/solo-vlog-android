@@ -79,7 +79,7 @@ public final class CameraJourneyTest {
         Clip two=record(2),three=record(3),five=record(5);
         assertThat(two.landscape()).isFalse();assertThat(three.landscape()).isFalse();assertThat(five.landscape()).isFalse();
         SystemClock.sleep(5500);UiObject2 camera=description("カメラプレビュー");assertThat(camera.getVisibleBounds().width()).isAtLeast((int)(device.getDisplayWidth()*.95));assertThat(camera.getVisibleBounds().height()).isAtLeast((int)(device.getDisplayHeight()*.95));assertThat(device.hasObject(By.text("daylog"))).isFalse();screenshot("01-camera");
-        clickDescription("日々の記録");text("動画を調整");
+        clickDescription("日々の記録");text("レンダリング");
         clickDescription("1日のテキストを編集");description("1日のテキスト").setText("京都旅行 1日目");
         device.findObject(By.res("android","button1")).click();text("京都旅行 1日目");
         String day=JournalRules.day(two.capturedAt(),240,ZoneId.of(two.zoneId())).toString();
@@ -89,7 +89,7 @@ public final class CameraJourneyTest {
         device.findObject(By.res("android","button1")).click();
         awaitCaption(two.id(),"駅前で朝ごはん");
         screenshot("02-journal");
-        UiObject2 save=device.wait(Until.findObject(By.text("動画を調整")),15000);assertThat(save).isNotNull();save.click();
+        UiObject2 save=device.wait(Until.findObject(By.text("レンダリング")),15000);assertThat(save).isNotNull();save.click();
         MovieJourney.renderAndSave(context,device,true,"day");
         try(Cursor cursor=context.getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,new String[]{MediaStore.Video.Media._ID},MediaStore.Video.Media.RELATIVE_PATH+"=?",new String[]{"Movies/Daylog/"},MediaStore.Video.Media._ID+" DESC")){
             assertThat(cursor).isNotNull();assertThat(cursor.moveToFirst()).isTrue();

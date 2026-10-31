@@ -85,7 +85,7 @@ public final class MainActivity extends ComponentActivity {
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
     private boolean captureBusy,cameraReady;
-    private int selectedSeconds=3;
+    private int selectedSeconds=2;
     private LocalDate selectedDay;
     private boolean journalLandscape;
     private Clip lastSaved;
@@ -109,8 +109,8 @@ public final class MainActivity extends ComponentActivity {
         repository=ClipRepository.get(this);camera=new CameraEngine(this,this);
         AppNotifications.channels(this);notificationAccess=new NotificationAccess(this,()->{if(screen==Screen.SETTINGS)renderSettingsBody();});
         places=new PlaceResolver(this);locations=new LocationTracker(this,()->{updateLocationIcon();android.location.Location fix=locations.snapshot();if(fix!=null){GeoPoint point=LocationTracker.point(fix);if(point!=null)places.resolve(point,names->{});}});
-        selectedSeconds=prefs.getInt("seconds",3);
-        if(selectedSeconds!=2&&selectedSeconds!=3&&selectedSeconds!=5)selectedSeconds=3;
+        selectedSeconds=prefs.getInt("seconds",2);
+        if(selectedSeconds!=2&&selectedSeconds!=3&&selectedSeconds!=5)selectedSeconds=2;
         journalLandscape=landscape();selectedDay=today();
         if(state!=null){
             screen=Screen.valueOf(state.getString("screen","CAMERA"));
@@ -393,7 +393,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout summary=row();
         TextView count=bold(selected.size()+"本 · "+seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView save=button("動画を調整","edit",true,()->export(selected,selectedDay.toString(),journalLandscape));
+        TextView save=button("レンダリング","library",true,()->export(selected,selectedDay.toString(),journalLandscape));
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
@@ -432,7 +432,7 @@ public final class MainActivity extends ComponentActivity {
     private EditText captionInput(String value,String label,int limit){
         EditText input=new EditText(this);input.setText(value);input.setHint(label);input.setContentDescription(label);
         input.setTextSize(16);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        input.setMaxLines(3);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;
+        input.setMinLines(3);input.setMaxLines(5);input.setMinHeight(dp(112));input.setGravity(Gravity.TOP|Gravity.START);input.setPadding(dp(12),dp(16),dp(12),dp(16));input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;
     }
     private final class EditorPreview {
         final Ui.AspectFrame frame;
@@ -496,7 +496,7 @@ public final class MainActivity extends ComponentActivity {
         ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
             .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
-        TextView saveVideo=button("動画を調整","edit",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
+        TextView saveVideo=button("レンダリング","library",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
         java.util.function.Consumer<String> selectPlace=name->{prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
         refreshChoices[0]=()->{
             choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
@@ -551,6 +551,15 @@ public final class MainActivity extends ComponentActivity {
             })
             .setNegativeButton("キャンセル",null).show());
         content.addView(format);gap(content,1);
+        String[] qualityNames={"自動（最高画質）","4K","1080p","720p"};String[] qualityValues={"auto","uhd","fhd","hd"};
+        String quality=prefs.getString("captureQuality","auto");int selectedQuality=java.util.Arrays.asList(qualityValues).indexOf(quality);if(selectedQuality<0)selectedQuality=0;
+        String qualityLabel=qualityNames[selectedQuality];
+        if(camera.actualQuality()!=null){if("auto".equals(quality))qualityLabel="自動（"+camera.actualQuality()+"）";else if(!qualityLabel.equals(camera.actualQuality()))qualityLabel+=" → "+camera.actualQuality();}
+        LinearLayout resolution=preferenceRow("撮影画質",qualityLabel);int qualityIndex=selectedQuality;
+        resolution.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("撮影画質").setSingleChoiceItems(qualityNames,qualityIndex,(dialog,which)->{
+            prefs.edit().putString("captureQuality",qualityValues[which]).apply();dialog.dismiss();renderSettingsBody();
+        }).setNegativeButton("キャンセル",null).show());content.addView(resolution);gap(content,1);
+
         String time=String.format(Locale.JAPAN,"%02d:%02d",boundary()/60,boundary()%60);
         LinearLayout day=preferenceRow("1日の切り替え時刻",time);day.setContentDescription("1日の切り替え時刻 "+time);
         day.setOnClickListener(v->new TimePickerDialog(this,(picker,h,m)->{prefs.edit().putInt("dayStart",h*60+m).apply();applyOrientation();renderSettingsBody();},boundary()/60,boundary()%60,true).show());
