@@ -55,7 +55,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private CaptionOverlay.Preview captions;
     private LinearLayout choices;
     private HorizontalScrollView placeScroll;
-    private boolean deleted,locating,writingLocation,waitingForSettings,visible;
+    private boolean deleted,locating,writingLocation,waitingForSettings,visible,placeGesture,pendingPlaceRefresh;
     private final Runnable save=this::saveEdits;
     private final Runnable timeout=()->{locating=false;locations.stop();refreshPlaces();if(clip.location()==null)toast("現在地を取得できませんでした");};
     private final ActivityResultLauncher<String[]> permission=registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),result->{
@@ -73,13 +73,14 @@ public final class CaptureEditorActivity extends ComponentActivity {
         render();resolvePlaces();
     }
     @Override protected void onResume(){
-        super.onResume();visible=true;
+        super.onResume();visible=true;placeGesture=false;
         if(clip==null)return;
         if(waitingForSettings){waitingForSettings=false;if(locations.granted()&&locations.enabled()){prefs.edit().putBoolean("location",true).apply();beginLocation();}}
         else if(needsLocation()&&prefs.getBoolean("location",true)&&locations.granted()&&!locating&&!writingLocation)beginLocation();
-        if(video!=null)video.start();
+        if(pendingPlaceRefresh)refreshPlaces();if(video!=null)video.start();
     }
     @Override protected void onStop(){
+        placeGesture=false;
         if(clip!=null){main.removeCallbacks(save);saveEdits();locations.stop();main.removeCallbacks(timeout);if(!writingLocation)locating=false;video.pause();}
         visible=false;super.onStop();
     }
@@ -104,7 +105,14 @@ public final class CaptureEditorActivity extends ComponentActivity {
         captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
         content.addView(frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
         video.setVideoPath(repository.file(clip.id()).getAbsolutePath());video.setOnPreparedListener(player->{player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});captions.startProbing(video,repository.file(clip.id()),io);
-        LinearLayout locationLine=row();placeScroll=new HorizontalScrollView(this);placeScroll.setHorizontalScrollBarEnabled(false);choices=row();placeScroll.addView(choices);locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(64),1));locationLine.addView(new Ui.Icon(this,"edit",Ui.INK,"場所を入力",this::editPlace),size(48,48));content.addView(locationLine,size(-1,64));
+        LinearLayout locationLine=row();placeScroll=new HorizontalScrollView(this){
+            @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
+                if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN)placeGesture=true;
+                boolean handled=super.dispatchTouchEvent(event);
+                if(event.getActionMasked()==android.view.MotionEvent.ACTION_UP||event.getActionMasked()==android.view.MotionEvent.ACTION_CANCEL){placeGesture=false;if(pendingPlaceRefresh)post(CaptureEditorActivity.this::refreshPlaces);}
+                return handled;
+            }
+        };placeScroll.setHorizontalScrollBarEnabled(false);choices=row();placeScroll.addView(choices);locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(64),1));locationLine.addView(new Ui.Icon(this,"edit",Ui.INK,"場所を入力",this::editPlace),size(48,48));content.addView(locationLine,size(-1,64));
         EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");content.addView(input,size(-1,56));
         input.addTextChangedListener(watcher(()->{clip=clip.withCaption(input.getText().toString());changed();}));
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){saveAndReview();return true;}return false;});
@@ -121,7 +129,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private boolean saveEdits(){if(deleted||clip==null)return false;try{repository.caption(clip.id(),clip.caption());repository.place(clip.id(),clip.place());return true;}catch(RuntimeException e){android.util.Log.w("DaylogEditor","Could not save edits",e);toast("編集内容を保存できませんでした");return false;}}
     private void saveAndReview(){main.removeCallbacks(save);if(!saveEdits())return;String day=JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString();startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("review_day",day).putExtra("edits_saved",true));finish();}
     private void refreshPlaces(){
-        if(isFinishing()||isDestroyed())return;choices.removeAllViews();LinkedHashSet<String> names=new LinkedHashSet<>();if(!clip.place().isBlank())names.add(clip.place());names.addAll(repository.nearbyPlaces(clip.location()));names.addAll(repository.placeCandidates(clip.id()));if(clip.location()!=null)names.add(clip.location().label());
+        if(isFinishing()||isDestroyed())return;if(placeGesture){pendingPlaceRefresh=true;return;}pendingPlaceRefresh=false;choices.removeAllViews();LinkedHashSet<String> names=new LinkedHashSet<>();if(!clip.place().isBlank())names.add(clip.place());names.addAll(repository.nearbyPlaces(clip.location()));names.addAll(repository.placeCandidates(clip.id()));if(clip.location()!=null)names.add(clip.location().label());
         for(String name:names){TextView chip=button(name,clip.place().equals(name),()->{clip=clip.withPlace(clip.place().equals(name)?"":name);repository.rememberPlace(clip.location(),clip.place());changed();saveEdits();refreshPlaces();placeScroll.scrollTo(0,0);});chip.setSingleLine(true);chip.setMaxWidth(dp(220));chip.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.setContentDescription((clip.place().equals(name)?"場所の表示を外す ":"場所を表示 ")+name);chip.setCompoundDrawablesRelative(Ui.drawable(this,"pin",clip.place().equals(name)?Ui.BG:Ui.INK),null,null,null);chip.setCompoundDrawablePadding(dp(8));LinearLayout.LayoutParams params=size(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(chip,params);}
         if(clip.location()==null){TextView current=button(locating?"取得中":locations.granted()?"位置を再取得":"現在地を追加",false,this::requestLocation);current.setEnabled(!locating);current.setAlpha(locating?.5f:1);choices.addView(current,size(-2,48));}
     }

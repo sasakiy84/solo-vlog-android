@@ -79,11 +79,13 @@ public final class LocationJourneyTest {
     private void saved()throws Exception{MovieJourney.renderAndSave(context,device,false,++saves==1?"single":"trip");}
     private void place(String value){click(By.desc("場所を入力"));find(By.desc("場所")).setText(value);click(By.res("android","button1"));}
     private void selectPlace(String name){
-        BySelector selector=By.desc("場所を表示 "+name);
-        for(int attempt=0;attempt<8;attempt++){
-            UiObject2 candidate=device.wait(Until.findObject(selector),500);if(candidate!=null){candidate.click();return;}
-            find(By.clazz(android.widget.HorizontalScrollView.class)).scroll(androidx.test.uiautomator.Direction.RIGHT,.8f);
-        }
+        BySelector selector=By.desc("場所を表示 "+name),selected=By.desc("場所の表示を外す "+name);
+        for(int attempt=0;attempt<12;attempt++)try{
+            if(device.hasObject(selected))return;
+            UiObject2 candidate=device.wait(Until.findObject(selector),500);
+            if(candidate!=null){candidate.click();if(device.wait(Until.hasObject(selected),2000))return;}
+            else find(By.clazz(android.widget.HorizontalScrollView.class)).scroll(androidx.test.uiautomator.Direction.RIGHT,.8f);
+        }catch(StaleObjectException refreshed){device.waitForIdle();}
         click(selector);
     }
     private static byte[] samples(File file) throws Exception{

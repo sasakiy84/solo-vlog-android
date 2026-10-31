@@ -291,7 +291,7 @@ public final class MainActivity extends ComponentActivity {
                             cameraReady=false;camera.unbind();locations.stop();
                             startActivity(new Intent(this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,clip.id()));
                         }
-                        else{undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);toast("保存しました");}
+                        else{undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
                     }
                 });
             }catch(Exception e){main.post(()->{captureBusy=false;if(!isDestroyed()){render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
