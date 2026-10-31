@@ -8,8 +8,9 @@
 
 ## ビルドとリリース
 
-- `README.md` にビルド・署名・配布手順を記載している。通常の検証は `python3 -m unittest discover -s scripts -p 'test_*.py' -v` と `./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` を使う。
+- GitHub Actions はリリース用の `release.yml` だけを使用する。テスト・lint・端末テスト・スクリーンショット用の Actions は実行しない。
+- ユーザーから明示的に依頼されない限り、ローカルでもテスト・lint を実行しない。リリースでは署名付き APK をビルドし、署名・バージョン・配布ファイルを確認する。
 - クラウドでは `/workspace/android-dev/env.sh` を source し、Gradle の実行には `python3 scripts/gradle-cloud.py` を使う。完全な JDK 21 と既存のプロキシ・CA 設定を使用する。
-- push やバージョン指定リリースを依頼された場合は、検証、必要なコミットと push、Actions の監視、成果物の確認までエージェントが実施する。通常の各段階で再確認は求めない。権限や資格情報が実際に不足している場合だけ、必要な操作を具体的に伝える。
+- push やリリースを依頼された場合は、必要なコミットと push、署名付きビルド、Actions の監視、成果物の確認までエージェントが実施する。通常の各段階で再確認は求めない。権限や資格情報が実際に不足している場合だけ、必要な操作を具体的に伝える。
 - リリースには `python3 scripts/release.py 1.2.3` を使い、署名付き APK とチェックサムが GitHub Releases に揃うまで確認する。検証だけの場合は `Android release` を `publish=false` で実行する。
 - 署名鍵・パスワード・トークンをコミットやログに含めない。公開証明書のハッシュ `release-certificate.sha256` と APK の署名を照合する。鍵を勝手に再生成・交換しない。

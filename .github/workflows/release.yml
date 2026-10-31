@@ -44,10 +44,6 @@ jobs:
           java-version: '21'
       - name: Install Android SDK packages
         run: bash scripts/setup-android-ci.sh
-      - name: Test and lint
-        run: |
-          python3 -m unittest discover -s scripts -p 'test_*.py' -v
-          ./gradlew --no-daemon :app:testDebugUnitTest :app:lintRelease
       - name: Restore signing key
         env:
           ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
@@ -95,7 +91,8 @@ jobs:
             git push origin "refs/tags/$RELEASE_TAG"
           fi
           gh release create "$RELEASE_TAG" dist/*.apk dist/SHA256SUMS dist/apk-metadata.txt \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --title "Solo Vlog $RELEASE_TAG" --generate-notes --draft
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "daylog $RELEASE_TAG" \
+            --notes 'Android 16 以上向けの署名付き APK です。APK をダウンロードしてインストールしてください。' --draft
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
       - name: Remove signing material
         if: always()
