@@ -11,9 +11,13 @@ public final class CaptionColorsTest {
         assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFFFFFFFF))).isTrue();
         assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF000000))).isFalse();
     }
-    @Test public void graySelectionMaximizesContrastInLinearLight(){
-        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF808080))).isTrue();
+    @Test public void midtonesPreferWhiteAndClearlyBrightGrayUsesBlack(){
+        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF808080))).isFalse();
         assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF646464))).isFalse();
+        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFFB4B4B4))).isTrue();
+    }
+    @Test public void indoorBrownWallFromCameraExampleUsesWhite(){
+        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF987F60))).isFalse();
     }
     @Test public void brightYellowAndDarkBlueUseDifferentInkDespiteBothBeingSaturated(){
         assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFFFFFF00))).isTrue();

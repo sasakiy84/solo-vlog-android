@@ -103,7 +103,10 @@ public final class LocationJourneyTest {
             String day=JournalRules.day(System.currentTimeMillis(),240,ZoneId.systemDefault()).toString();repository.dayCaption(day,"東京・京都旅行");
             Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
             await(()->device.getDisplayRotation()==0);device.waitForIdle();
-            Clip first=record(2);find(By.pkg(Pattern.compile(".*inputmethod.*")));
+            Clip first=record(2);find(By.desc("撮影に戻る"));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->assertThat(androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).stream().anyMatch(activity->activity instanceof CaptureEditorActivity)).isTrue());
+            find(By.pkg(Pattern.compile(".*inputmethod.*")));
             DeviceImages.screenshot(context,device,"09-post-capture-keyboard");
             find(By.desc("クリップのテキスト")).setText("東京に到着");await(()->clip(first.id()).caption().equals("東京に到着"));
             String originalRotation;try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){metadata.setDataSource(repository.file(first.id()).getAbsolutePath());originalRotation=metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);}

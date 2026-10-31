@@ -44,7 +44,8 @@ public final class CaptionRenderingTest {
         try{
             List<EditedMediaItem> items=new ArrayList<>();
             Clip clip=new Clip("fixture",Instant.parse("2026-10-30T12:34:00Z").toEpochMilli(),2000,2,false,true,"UTC","Breakfast").withPlace("Tokyo");
-            for(int color:new int[]{Color.WHITE,Color.BLACK,Color.rgb(100,100,100)}){
+            int[] backgrounds={Color.WHITE,Color.BLACK,Color.rgb(100,100,100),Color.rgb(152,127,96),Color.rgb(128,128,128),Color.rgb(180,180,180)};
+            for(int color:backgrounds){
                 File image=File.createTempFile("contrast-",".png",context.getCacheDir());files.add(image);
                 Bitmap bitmap=Bitmap.createBitmap(720,1280,Bitmap.Config.ARGB_8888);bitmap.eraseColor(color);
                 try(FileOutputStream stream=new FileOutputStream(image)){assertThat(bitmap.compress(Bitmap.CompressFormat.PNG,100,stream)).isTrue();}bitmap.recycle();
@@ -64,14 +65,14 @@ public final class CaptionRenderingTest {
             assertThat(done.await(180,TimeUnit.SECONDS)).isTrue();if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(output.getAbsolutePath());
-                for(int n=0;n<3;n++){
+                for(int n=0;n<backgrounds.length;n++){
                     Bitmap frame=media.getFrameAtTime(500000+n*1000000L,MediaMetadataRetriever.OPTION_CLOSEST);
-                    assertThat(frame).isNotNull();boolean bright=n==0;
+                    assertThat(frame).isNotNull();boolean bright=n==0||n==5;
                     ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"08-contrast-"+n+".png");values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/DaylogTestScreenshots");values.put(MediaStore.Images.Media.IS_PENDING,1);
                     Uri image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertThat(image).isNotNull();
                     try(OutputStream stream=context.getContentResolver().openOutputStream(image)){assertThat(stream).isNotNull();assertThat(frame.compress(Bitmap.CompressFormat.PNG,100,stream)).isTrue();}
                     values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);context.getContentResolver().update(image,values,null,null);
-                    assertThat(CaptionColors.luminance(frame.getPixel(0,0))>.8).isEqualTo(bright);
+                    assertThat(CaptionColors.darkInk(CaptionColors.luminance(frame.getPixel(0,0)))).isEqualTo(bright);
                     assertInk(frame,bright,.03f,.03f,.8f,.2f,"background "+n+", day text"); // day text
                     assertInk(frame,bright,.03f,.92f,.7f,.98f,"background "+n+", clip text");
                     assertInk(frame,bright,.03f,.86f,.7f,.92f,"background "+n+", place"); // clip text

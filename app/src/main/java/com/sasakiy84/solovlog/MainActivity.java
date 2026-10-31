@@ -74,8 +74,7 @@ public final class MainActivity extends ComponentActivity {
     private Ui.Icon locationIcon;
     private android.location.Location captureLocation;
     private boolean foreground,editorOpen;
-    private Runnable locationAfterPermission,pendingLocationAction,pendingLocationFailure,locationAfterSettings,locationSettingsCancelled,activeEditorSave;
-    private final Runnable locationTimeout=()->{pendingLocationAction=null;Runnable failed=pendingLocationFailure;pendingLocationFailure=null;if(failed!=null)failed.run();if(locations!=null&&editorOpen)locations.stop();if(foreground)toast("現在地を取得できませんでした");};
+    private Runnable locationAfterPermission,locationAfterSettings,locationSettingsCancelled,activeEditorSave;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private final Handler main=new Handler(Looper.getMainLooper());
     private final LruCache<String,Bitmap> thumbnails=new LruCache<>(24);
@@ -108,9 +107,7 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         prefs=getSharedPreferences("daylog",MODE_PRIVATE);
         repository=ClipRepository.get(this);camera=new CameraEngine(this,this);exporter=new VideoExporter(this);
-        places=new PlaceResolver(this);locations=new LocationTracker(this,()->{
-            updateLocationIcon();if(pendingLocationAction!=null&&locations.snapshot()!=null){Runnable action=pendingLocationAction;pendingLocationAction=null;pendingLocationFailure=null;main.removeCallbacks(locationTimeout);action.run();}
-        });
+        places=new PlaceResolver(this);locations=new LocationTracker(this,this::updateLocationIcon);
         selectedSeconds=prefs.getInt("seconds",3);
         if(selectedSeconds!=2&&selectedSeconds!=3&&selectedSeconds!=5)selectedSeconds=3;
         journalLandscape=landscape();selectedDay=today();
@@ -136,7 +133,7 @@ public final class MainActivity extends ComponentActivity {
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();resumeCamera();}
     }
-    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(locations!=null)locations.stop();pendingLocationAction=null;Runnable failed=pendingLocationFailure;pendingLocationFailure=null;if(failed!=null)failed.run();main.removeCallbacks(locationTimeout);if(camera!=null&&camera.busy())stopCapture();super.onStop();}
+    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
@@ -299,7 +296,10 @@ public final class MainActivity extends ComponentActivity {
                     if(clip.location()!=null)resolvePlaces(clip,names->{});
                     if(screen==Screen.CAMERA){
                         resetCaptureControls();
-                        if(foreground&&prefs.getBoolean("postCaptureEdit",true))review(clip,true);
+                        if(foreground&&prefs.getBoolean("postCaptureEdit",true)){
+                            cameraReady=false;camera.unbind();locations.stop();
+                            startActivity(new Intent(this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,clip.id()));
+                        }
                         else{undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);toast("保存しました");}
                     }
                 });
@@ -344,12 +344,6 @@ public final class MainActivity extends ComponentActivity {
         new AlertDialog.Builder(this).setTitle("端末の位置情報がオフです").setPositiveButton("設定を開く",(d,w)->{
             locationAfterSettings=ready;locationSettingsCancelled=cancel;startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
         }).setNegativeButton("キャンセル",(d,w)->cancel.run()).show();
-    }
-    private void currentLocation(java.util.function.Consumer<android.location.Location> ready){
-        if(!locations.enabled()){deviceLocationReady(()->currentLocation(ready),()->ready.accept(null));return;}
-        android.location.Location snapshot=locations.snapshot();if(snapshot!=null){ready.accept(snapshot);return;}
-        pendingLocationFailure=()->ready.accept(null);pendingLocationAction=()->{android.location.Location fix=locations.snapshot();if(fix!=null)ready.accept(fix);if(editorOpen)locations.stop();};
-        main.removeCallbacks(locationTimeout);main.postDelayed(locationTimeout,15000);locations.start();
     }
     private void resolvePlaces(Clip clip,java.util.function.Consumer<List<String>> ready){
         if(clip.location()==null){ready.accept(List.of());return;}
@@ -492,14 +486,13 @@ public final class MainActivity extends ComponentActivity {
         dialog.setOnDismissListener(d->{main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;if(panel!=null)panel.video.stopPlayback();if(!isDestroyed())render();});
         dialog.show();if(panel!=null)panel.start(first);focusEditor(input,dialog);
     }
-    private void review(Clip clip){review(clip,false);}
-    private void review(Clip clip,boolean justCaptured){
+    private void review(Clip clip){
         if(editorOpen||isDestroyed())return;editorOpen=true;cameraReady=false;camera.unbind();locations.stop();
-        Runnable[] refreshChoices={null};Clip[] edited={clip};boolean[] deleted={false},leavingForExport={false},locating={false};
+        Runnable[] refreshChoices={null};Clip[] edited={clip};boolean[] deleted={false},leavingForExport={false};
         String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
         LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);
         EditorPreview panel=new EditorPreview(clip,repository.dayCaption(day));
-        content.addView(panel.frame,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:justCaptured?180:280));
+        content.addView(panel.frame,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:280));
         gap(content,10);
         HorizontalScrollView placeScroll=new HorizontalScrollView(this);placeScroll.setHorizontalScrollBarEnabled(false);LinearLayout choices=row();placeScroll.addView(choices);
         LinearLayout locationLine=row();locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(52),1));content.addView(locationLine,lp(-1,52));gap(content,8);
@@ -508,26 +501,15 @@ public final class MainActivity extends ComponentActivity {
         Runnable refreshPreview=()->panel.captions.update(edited[0],repository.dayCaption(day),prefs.getBoolean("showTime",true));
         ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
-            .setPositiveButton(justCaptured?"次を撮る":"閉じる",null).setNeutralButton("削除",null).create();
-        TextView saveVideo=button("このクリップを保存","download",true,()->{if(locating[0])return;save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
+            .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
+        TextView saveVideo=button("このクリップを保存","download",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
         java.util.function.Consumer<String> selectPlace=name->{edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
-        java.util.function.Consumer<android.location.Location> attachLocation=fix->{
-            if(!dialog.isShowing())return;if(fix==null){locating[0]=false;refreshChoices[0].run();return;}GeoPoint point=LocationTracker.point(fix);locating[0]=true;refreshChoices[0].run();
-            io.execute(()->{
-                try{repository.location(clip.id(),point);main.post(()->{
-                    if(!dialog.isShowing())return;locating[0]=false;edited[0]=edited[0].withLocation(point);repository.rememberPlace(point,edited[0].place());refreshPreview.run();refreshChoices[0].run();
-                    resolvePlaces(edited[0],names->{if(dialog.isShowing())refreshChoices[0].run();});
-                });}catch(Exception e){android.util.Log.w("DaylogLocation","Could not save GPS metadata",e);main.post(()->{locating[0]=false;if(dialog.isShowing()){toast("位置情報を保存できませんでした");refreshChoices[0].run();}});}
-            });
-        };
-        Runnable addCurrent=()->requestLocation(()->{locating[0]=true;refreshChoices[0].run();currentLocation(attachLocation);});
         refreshChoices[0]=()->{
-            saveVideo.setEnabled(!locating[0]);saveVideo.setAlpha(locating[0]?.5f:1f);choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
+            choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
             if(!edited[0].place().isBlank())names.add(edited[0].place());names.addAll(repository.nearbyPlaces(edited[0].location()));names.addAll(repository.placeCandidates(clip.id()));
             if(edited[0].location()!=null)names.add(edited[0].location().label());
             for(String name:names){TextView chip=button(name,"pin",edited[0].place().equals(name),()->selectPlace.accept(name));chip.setContentDescription((edited[0].place().equals(name)?"場所の表示を外す ":"場所を表示 ")+name);chip.setSingleLine(true);chip.setMaxWidth(dp(220));chip.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.setSelected(edited[0].place().equals(name));LinearLayout.LayoutParams params=lp(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(chip,params);}
-            if(justCaptured&&edited[0].location()==null){TextView current=button("現在地を追加","pin",false,addCurrent);current.setEnabled(!locating[0]);current.setAlpha(locating[0]?.5f:1f);LinearLayout.LayoutParams params=lp(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(current,params);}
-            if(names.isEmpty()&&!justCaptured)choices.addView(button("場所を入力","pin",false,()->editPlaceName(edited,save,refreshPreview,refreshChoices[0])),lp(-2,48));
+            if(names.isEmpty())choices.addView(button("場所を入力","pin",false,()->editPlaceName(edited,save,refreshPreview,refreshChoices[0])),lp(-2,48));
         };
         locationLine.addView(icon("edit","場所を入力",()->editPlaceName(edited,save,refreshPreview,refreshChoices[0])),lp(48,48));
         input.addTextChangedListener(new TextWatcher(){
@@ -535,17 +517,15 @@ public final class MainActivity extends ComponentActivity {
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){edited[0]=edited[0].withCaption(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}
             @Override public void afterTextChanged(Editable s){}
         });
-        if(!justCaptured){gap(content,12);content.addView(saveVideo,lp(-1,48));}
+        gap(content,12);content.addView(saveVideo,lp(-1,48));
         dialog.setOnDismissListener(d->{
-            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.video.stopPlayback();editorOpen=false;pendingLocationAction=null;pendingLocationFailure=null;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;main.removeCallbacks(locationTimeout);locations.stop();
+            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.video.stopPlayback();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
             if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();if(!leavingForExport[0])resumeCamera();}}
         });
         dialog.show();dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？")
             .setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{try{repository.delete(clip.id());deleted[0]=true;thumbnails.remove(clip.id());dialog.dismiss();}catch(RuntimeException e){toast("削除できませんでした");}}).show());
         refreshChoices[0].run();panel.start(clip);
         if(clip.location()!=null)resolvePlaces(clip,names->{if(dialog.isShowing())refreshChoices[0].run();});
-        else if(justCaptured&&locationEnabled())addCurrent.run();
-        if(justCaptured)focusEditor(input,dialog);
     }
     private void editPlaceName(Clip[] edited,Runnable save,Runnable refreshPreview,Runnable refreshChoices){
         LinearLayout form=column();padded(form,20);EditText input=captionInput(edited[0].place(),"場所",80);input.setHint(null);form.addView(input,lp(-1,-2));

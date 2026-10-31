@@ -14,6 +14,8 @@
         android:icon="@drawable/ic_daylog"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:theme="@style/Theme.Daylog">
+        <activity android:name=".CaptureEditorActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MainActivity" android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
