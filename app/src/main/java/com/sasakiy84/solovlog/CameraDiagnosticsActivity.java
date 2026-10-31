@@ -42,7 +42,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
     private final Map<String,Boolean> recordings=new HashMap<>();
     private LinearLayout root,body;
     private FrameLayout stage;
-    private TextView status,choice,record,play,use,batch,share,copy,reset,custom;
+    private TextView status,choice,record,play,use,batch,share,copy,reset,custom,rotationControl;
     private ZoomControls zoom;
     private CameraEngine engine;
     private JSONObject report;
@@ -50,7 +50,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
     private File trial;
     private VideoView playbackVideo;
     private int selected,generation;
-    private boolean foreground,loading=true,ready,recording,batching,finished;
+    private boolean foreground,loading=true,ready,recording,batching,finished,correctionPending;
     private final Runnable timeout=()->finishAttempt(false,"応答待ちの時間を超えました");
     private final androidx.activity.result.ActivityResultLauncher<String> permission=registerForActivityResult(new ActivityResultContracts.RequestPermission(),granted->{if(granted)scan();else failedScan("カメラの権限が必要です");});
     @Override public void onCreate(Bundle state){
@@ -71,6 +71,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
         gap(12);batch=button("まとめて確認",()->{if(batching){cancel();status.setText("確認を中止しました");}else{batching=true;open(0,true);}});body.addView(batch,params(-1,48));
         gap(12);pair(share=button("結果を共有",this::share),copy=button("結果をコピー",()->{getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("カメラ診断",reportText()));toast("コピーしました");}));
         gap(12);custom=button("IDを指定",this::manualRoute);body.addView(custom,params(-1,48));
+        gap(12);rotationControl=button("映像の補正",this::correctionSettings);body.addView(rotationControl,params(-1,48));
         gap(12);reset=button("自動に戻す",()->{try{CameraProfiles.select(this,null);toast("自動に戻しました");finish();}catch(Exception e){toast("設定を保存できませんでした");}});body.addView(reset,params(-1,48));
         update();
     }
@@ -122,7 +123,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
     }
     private void open(int index,boolean automaticRecording){
         release();selected=index;ready=false;recording=false;finished=false;choice.setText(labels.get(index));status.setText(batching?"確認中 "+(index+1)+" / "+routes.size():"カメラを準備中");
-        int token=generation;attempt=new JSONObject();put(attempt,"route",key(index));put(attempt,"startedAt",System.currentTimeMillis());put(attempt,"events",new JSONArray());
+        int token=generation;attempt=new JSONObject();put(attempt,"route",key(index));if(routes.get(index)!=null)try{put(attempt,"configuration",routes.get(index).json());}catch(Exception e){android.util.Log.w("DaylogDiagnosis","Invalid route configuration",e);}put(attempt,"startedAt",System.currentTimeMillis());put(attempt,"events",new JSONArray());
         try{JSONArray attempts=report.getJSONArray("attempts");while(attempts.length()>=32)attempts.remove(0);attempts.put(attempt);}catch(Exception e){android.util.Log.w("DaylogDiagnosis","Cannot append camera attempt",e);}persist();
         JSONObject current=attempt;CameraPreview preview=new CameraPreview(this,routes.get(index),true);stage.removeAllViews();stage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
         if(zoom!=null)body.removeView(zoom);zoom=new ZoomControls(this,false,ratio->{if(engine!=null)engine.setZoom(ratio);});zoom.setBackground(Ui.rounded(this,Ui.INK,10));
@@ -193,18 +194,46 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
             if(index<0){routes.add(route);labels.add(route.label()+" · 手動指定");index=routes.size()-1;}dialog.dismiss();open(index,false);
         });
     }
+    private void correctionSettings(){
+        if(correctionPending||recording||batching||routes.isEmpty()||routes.get(selected)==null||routes.get(selected).cameraX())return;
+        CameraProfiles.Route route=routes.get(selected);int token=generation;correctionPending=true;update();
+        io.execute(()->{int[] modes=null;try{modes=getSystemService(android.hardware.camera2.CameraManager.class).getCameraCharacteristics(route.physicalId()==null?route.cameraId():route.physicalId()).get(android.hardware.camera2.CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES);}catch(Exception error){android.util.Log.w("DaylogDiagnosis","Lens correction capabilities unavailable",error);}
+            int[] supported=modes==null?new int[0]:modes;main.post(()->{if(valid(token)){correctionPending=false;update();showCorrectionSettings(route,supported);}});
+        });
+    }
+    private void showCorrectionSettings(CameraProfiles.Route route,int[] supported){
+        int[] angles={route.previewCorrection(),route.videoCorrection(),route.lensCorrection()};
+        LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(8));
+        String[] values={"補正なし","右90°","180°","左90°"};TextView preview=button("プレビュー · "+values[angles[0]/90],()->{}),video=button("保存動画 · "+values[angles[1]/90],()->{});
+        form.addView(preview,params(-1,56));form.addView(video,params(-1,56));
+        for(int index=0;index<2;index++){int field=index;TextView control=index==0?preview:video;control.setOnClickListener(v->new AlertDialog.Builder(this).setTitle(field==0?"プレビュー":"保存動画").setSingleChoiceItems(values,angles[field]/90,(d,which)->{angles[field]=which*90;control.setText((field==0?"プレビュー":"保存動画")+" · "+values[which]);d.dismiss();}).setNegativeButton("キャンセル",null).show());}
+        java.util.List<Integer> lensModes=new ArrayList<>();java.util.List<String> lensNames=new ArrayList<>();lensModes.add(-1);lensNames.add("自動");
+        for(int mode:new int[]{0,1,2})if(java.util.Arrays.stream(supported).anyMatch(value->value==mode)){lensModes.add(mode);lensNames.add(mode==0?"オフ":mode==1?"標準":"高品質");}
+        if(!lensModes.contains(angles[2]))angles[2]=-1;
+        if(lensModes.contains(1)||lensModes.contains(2)){TextView lens=button("レンズ補正 · "+lensNames.get(lensModes.indexOf(angles[2])),()->{});form.addView(lens,params(-1,56));
+            lens.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("レンズ補正").setSingleChoiceItems(lensNames.toArray(new String[0]),lensModes.indexOf(angles[2]),(dialog,which)->{angles[2]=lensModes.get(which);lens.setText("レンズ補正 · "+lensNames.get(which));dialog.dismiss();}).setNegativeButton("キャンセル",null).show());
+        }
+        new AlertDialog.Builder(this).setTitle("映像の補正").setView(form).setPositiveButton("保存",(dialog,which)->{
+            CameraProfiles.Route changed=route.withCorrection(angles[0],angles[1],angles[2]);
+            try{CameraProfiles.Route saved=CameraProfiles.selected(this);if(saved!=null&&saved.key().equals(route.key()))CameraProfiles.select(this,changed);
+                routes.set(selected,changed);open(selected,false);toast("保存しました");
+            }catch(Exception error){toast("映像の補正を保存できませんでした");}
+        }).setNegativeButton("キャンセル",null).show();
+    }
     private void apply(){
         if(!Boolean.TRUE.equals(recordings.get(key(selected))))return;
         try{CameraProfiles.select(this,routes.get(selected));toast("撮影カメラを変更しました");finish();}catch(Exception e){toast("設定を保存できませんでした");}
     }
     private void play(){
         if(trial==null||!trial.isFile())return;
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,getSharedPreferences("daylog",0).getBoolean("landscape",false));VideoView video=new VideoView(this);playbackVideo=video;frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+        boolean wide=getSharedPreferences("daylog",0).getBoolean("landscape",false);JSONObject metadata=attempt==null?null:attempt.optJSONObject("recording");
+        if(metadata!=null&&metadata.optInt("width")>0&&metadata.optInt("height")>0){wide=metadata.optInt("width")>metadata.optInt("height");if(metadata.optInt("rotation")%180!=0)wide=!wide;}
+        Ui.AspectFrame frame=new Ui.AspectFrame(this,wide);VideoView video=new VideoView(this);playbackVideo=video;frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
         int token=generation;JSONObject current=attempt;String routeKey=key(selected);
         video.setOnInfoListener((player,what,extra)->{if(what==android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START&&player.getDuration()>=1800&&valid(token)){recordings.put(routeKey,true);put(current,"playbackRendered",true);put(current,"success",true);put(current,"result","動画の再生を確認しました");persist();status.setText("動画の再生を確認しました");update();}return false;});
         video.setOnErrorListener((player,what,extra)->{event(current,"playbackError",what+" / "+extra);toast("動画を再生できませんでした");return true;});
         video.setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE);video.setOnPreparedListener(player->{player.setVolume(0,0);player.setLooping(true);video.start();});video.setVideoPath(trial.getAbsolutePath());
-        LinearLayout playback=column();playback.setGravity(Gravity.CENTER_HORIZONTAL);playback.addView(frame,params(-1,getSharedPreferences("daylog",0).getBoolean("landscape",false)?220:360));
+        LinearLayout playback=column();playback.setGravity(Gravity.CENTER_HORIZONTAL);playback.addView(frame,params(-1,wide?220:360));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("確認した録画").setView(playback).setPositiveButton("閉じる",null).create();dialog.setOnDismissListener(d->{video.stopPlayback();if(playbackVideo==video)playbackVideo=null;});dialog.show();
     }
     private void share(){
@@ -234,12 +263,12 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
     }
     private void update(){
         if(choice==null)return;boolean blocked=loading||recording||batching;
-        choice.setEnabled(!blocked&&!routes.isEmpty());custom.setEnabled(!blocked);record.setEnabled(!blocked&&!routes.isEmpty()&&(ready||finished));play.setEnabled(!blocked&&trial!=null&&trial.isFile()&&trial.length()>0);
+        choice.setEnabled(!blocked&&!routes.isEmpty());custom.setEnabled(!blocked);rotationControl.setEnabled(!correctionPending&&!blocked&&!routes.isEmpty()&&routes.get(selected)!=null&&!routes.get(selected).cameraX());record.setEnabled(!blocked&&!routes.isEmpty()&&(ready||finished));play.setEnabled(!blocked&&trial!=null&&trial.isFile()&&trial.length()>0);
         use.setEnabled(!blocked&&!routes.isEmpty()&&Boolean.TRUE.equals(recordings.get(key(selected))));use.setAlpha(use.isEnabled()?1:.4f);
         batch.setEnabled(!loading&&!routes.isEmpty()&&(!recording||batching));batch.setText(batching?"確認を中止":"まとめて確認");share.setEnabled(report!=null&&!recording&&!batching);copy.setEnabled(share.isEnabled());reset.setEnabled(!recording&&!batching);
     }
     private void release(){
-        ++generation;main.removeCallbacks(timeout);if(engine!=null){engine.stop();engine.unbind();engine=null;}if(trial!=null){trial.delete();trial=null;}ready=false;recording=false;
+        ++generation;correctionPending=false;main.removeCallbacks(timeout);if(engine!=null){engine.stop();engine.unbind();engine=null;}if(trial!=null){trial.delete();trial=null;}ready=false;recording=false;
     }
     private void cancel(){put(attempt,"result","中止");persist();batching=false;release();update();}
     @Override protected void onResume(){super.onResume();foreground=true;if(!loading&&!routes.isEmpty()&&engine==null&&!recording){update();}}

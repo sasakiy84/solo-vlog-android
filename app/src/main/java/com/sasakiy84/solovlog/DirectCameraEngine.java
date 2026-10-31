@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Matrix;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.*;
 import android.hardware.camera2.params.OutputConfiguration;
@@ -50,7 +49,7 @@ final class DirectCameraEngine {
     private int sizeIndex,rotation,sessionGeneration,openRetries,recordedFrames;
     private long capturedAt,started,firstSensorTime,lastSensorTime;
     private int seconds;
-    private boolean opening,recording,audio,physicalCrop,maxDurationReached;
+    private boolean opening,recording,audio,physicalCrop,maxDurationReached,reportedTransform;
     private Location location;
     private volatile boolean closed,ready,busy;
     private float scale=1,nativeMin=1,nativeMax=1,zoom=1;
@@ -81,7 +80,7 @@ final class DirectCameraEngine {
             public void onSurfaceTextureAvailable(SurfaceTexture surface,int w,int h){worker.post(()->open(surface));}
             public void onSurfaceTextureSizeChanged(SurfaceTexture surface,int w,int h){transform();}
             public boolean onSurfaceTextureDestroyed(SurfaceTexture surface){close();return true;}
-            public void onSurfaceTextureUpdated(SurfaceTexture surface){}
+            public void onSurfaceTextureUpdated(SurfaceTexture surface){if(!reportedTransform){reportedTransform=true;transform();}}
         });
         if(view.isAvailable())worker.post(()->open(view.getSurfaceTexture()));
     }
@@ -100,7 +99,7 @@ final class DirectCameraEngine {
             boolean front=Integer.valueOf(CameraCharacteristics.LENS_FACING_FRONT).equals(source.get(CameraCharacteristics.LENS_FACING));
             int outputDegrees=(sensor+(front?rotation:-rotation)+360)%360;
             // Encoder orientation metadata is independent of display rotation.
-            rotation=outputDegrees;
+            rotation=(outputDegrees+route.videoCorrection())%360;
             var map=source.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);if(map==null)throw new IllegalStateException("No stream configuration");
             Size[] supported=map.getOutputSizes(MediaRecorder.class);if(supported==null)supported=map.getOutputSizes(android.graphics.ImageFormat.PRIVATE);
             if(supported==null)throw new IllegalStateException("No recording sizes");
@@ -112,7 +111,7 @@ final class DirectCameraEngine {
             previewSize=Arrays.stream(previews).filter(s->s.getWidth()<=1920&&Math.abs(s.getWidth()/(float)s.getHeight()-16f/9)<.04)
                 .min(Comparator.comparingInt(s->Math.abs(s.getWidth()-1280))).orElseThrow(()->new IllegalStateException("No 16:9 preview"));
             if(previewSurface!=null)previewSurface.release();surface.setDefaultBufferSize(previewSize.getWidth(),previewSize.getHeight());previewSurface=new Surface(surface);transform();
-            event("open",route.key()+", scale="+scale+", zoom="+nativeMin+".."+nativeMax+", recording="+videoSize);
+            event("open",route.key()+", scale="+scale+", zoom="+nativeMin+".."+nativeMax+", recording="+videoSize+", sensorOrientation="+sensor+", orientationHint="+rotation+", distortionCorrectionModes="+Arrays.toString(source.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)));
             worker.removeCallbacks(timeout);worker.postDelayed(timeout,15000);
             manager.openCamera(route.cameraId(),context.getMainExecutor(),new CameraDevice.StateCallback(){
                 public void onOpened(CameraDevice camera){if(closed){camera.close();return;}worker.post(()->{if(closed){camera.close();return;}device=camera;configure(false);});}
@@ -142,6 +141,10 @@ final class DirectCameraEngine {
                         try{
                             request=device.createCaptureRequest(record?CameraDevice.TEMPLATE_RECORD:CameraDevice.TEMPLATE_PREVIEW);if(!record||!route.recordOnly())request.addTarget(previewSurface);if(record)request.addTarget(recorder.getSurface());
                             request.set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO);
+                            int[] distortionModes=source.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES);
+                            if(route.lensCorrection()>=0&&distortionModes!=null&&Arrays.stream(distortionModes).anyMatch(mode->mode==route.lensCorrection()))request.set(CaptureRequest.DISTORTION_CORRECTION_MODE,route.lensCorrection());
+                            int[] rotateModes=source.get(CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES);
+                            if(rotateModes!=null&&Arrays.stream(rotateModes).anyMatch(mode->mode==CaptureRequest.SCALER_ROTATE_AND_CROP_NONE))request.set(CaptureRequest.SCALER_ROTATE_AND_CROP,CaptureRequest.SCALER_ROTATE_AND_CROP_NONE);
                             int[] autofocus=source.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
                             if(autofocus!=null&&Arrays.stream(autofocus).anyMatch(m->m==CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO))request.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
                             // Keep the full available field of view during diagnosis and normal recording.
@@ -155,12 +158,12 @@ final class DirectCameraEngine {
                                     if(closed||generation!=sessionGeneration)return;
                                     if(record){Long timestamp=result.get(CaptureResult.SENSOR_TIMESTAMP);if(timestamp!=null){if(firstSensorTime==0){firstSensorTime=timestamp;capturedAt=System.currentTimeMillis();}lastSensorTime=timestamp;recordedFrames++;}}
                                     if(first)return;first=true;
-                                    event("captureResult","physical="+result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)+", zoom="+result.get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+result.get(CaptureResult.SCALER_CROP_REGION)+", videoStabilization="+result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE));
+                                    event("captureResult","physical="+result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)+", zoom="+result.get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+result.get(CaptureResult.SCALER_CROP_REGION)+", videoStabilization="+result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)+", rotateAndCrop="+result.get(CaptureResult.SCALER_ROTATE_AND_CROP)+", distortionCorrection="+result.get(CaptureResult.DISTORTION_CORRECTION_MODE));
                                     for(var physical:result.getPhysicalCameraResults().entrySet())event("physicalCaptureResult",physical.getKey()+": zoom="+physical.getValue().get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+physical.getValue().get(CaptureResult.SCALER_CROP_REGION));
                                     if(!record){worker.removeCallbacks(timeout);opening=false;ready=true;publishZoom();callback(()->listener.ready());}
                                 }
                             },worker);
-                            if(record){firstSensorTime=0;lastSensorTime=0;recordedFrames=0;recorder.start();recording=true;worker.removeCallbacks(timeout);capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();event("recording",videoSize.toString());worker.post(tick);}
+                            if(record){firstSensorTime=0;lastSensorTime=0;recordedFrames=0;recorder.start();recording=true;worker.removeCallbacks(timeout);capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();event("recording",videoSize+", orientationHint="+rotation);worker.post(tick);}
                         }catch(Exception e){if(record)retryRecording(e);else fail("プレビューを開始できませんでした",e);}
                     });
                 }
@@ -175,7 +178,7 @@ final class DirectCameraEngine {
     });}
     private void applyZoom(){
         if(route.physicalId()==null&&parent.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)!=null){request.set(CaptureRequest.CONTROL_ZOOM_RATIO,zoom);return;}
-        Rect active=source.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);if(active==null)return;
+        Rect active=source.get(route.lensCorrection()==0?CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE:CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);if(active==null)active=source.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);if(active==null)return;
         int w=Math.round(active.width()/zoom),h=Math.round(active.height()/zoom);Rect crop=new Rect(active.centerX()-w/2,active.centerY()-h/2,active.centerX()+w/2,active.centerY()+h/2);
         if(route.physicalId()==null)request.set(CaptureRequest.SCALER_CROP_REGION,crop);
         else if(physicalCrop)request.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION,crop,route.physicalId());
@@ -245,14 +248,19 @@ final class DirectCameraEngine {
     private void callback(Runnable action){main.post(()->{if(!closed)action.run();});}
     private void event(String stage,String detail){main.post(()->listener.diagnostic(stage,detail));}
     private void transform(){main.post(()->{
-        if(closed||texture==null||previewSize==null||texture.getWidth()==0||texture.getHeight()==0)return;
-        int viewW=texture.getWidth(),viewH=texture.getHeight();boolean swap=rotation%180!=0;
-        float sourceW=swap?previewSize.getHeight():previewSize.getWidth(),sourceH=swap?previewSize.getWidth():previewSize.getHeight();
-        float fit=Math.min(viewW/sourceW,viewH/sourceH);Matrix matrix=new Matrix();
-        matrix.setScale(previewSize.getWidth()/(float)viewW,previewSize.getHeight()/(float)viewH);
-        matrix.postRotate(rotation);RectF bounds=new RectF(0,0,viewW,viewH);matrix.mapRect(bounds);
-        matrix.postScale(fit,fit);matrix.postTranslate((viewW-bounds.width()*fit)/2-bounds.left*fit,(viewH-bounds.height()*fit)/2-bounds.top*fit);
-        if(source!=null&&Integer.valueOf(CameraCharacteristics.LENS_FACING_FRONT).equals(source.get(CameraCharacteristics.LENS_FACING)))matrix.postScale(-1,1,viewW/2f,viewH/2f);
+        if(closed||texture==null||source==null||previewSize==null||texture.getWidth()==0||texture.getHeight()==0)return;
+        int viewW=texture.getWidth(),viewH=texture.getHeight();
+        Integer orientation=source.get(CameraCharacteristics.SENSOR_ORIENTATION);int sensor=orientation==null?90:orientation;
+        int display=texture.getDisplay()==null?0:texture.getDisplay().getRotation()*90;
+        int correction=route.previewCorrection(),angle=Math.floorMod(correction-display,360);
+        // TextureView already applies the sensor rotation and front-camera mirroring.
+        // Undo its stretch, then compensate display rotation and the explicit correction.
+        boolean swap=sensor%180!=0;
+        float baseW=swap?previewSize.getHeight():previewSize.getWidth(),baseH=swap?previewSize.getWidth():previewSize.getHeight();
+        float outputW=angle%180==0?baseW:baseH,outputH=angle%180==0?baseH:baseW;
+        float fit=Math.min(viewW/outputW,viewH/outputH);
+        Matrix matrix=new Matrix();matrix.setScale(baseW*fit/viewW,baseH*fit/viewH,viewW/2f,viewH/2f);matrix.postRotate(angle,viewW/2f,viewH/2f);
         texture.setTransform(matrix);
+        if(reportedTransform){float[] values=new float[9];matrix.getValues(values);event("previewTransform","sensor="+sensor+", display="+display+", correction="+correction+", view="+viewW+"x"+viewH+", buffer="+previewSize+", matrix="+Arrays.toString(values));}
     });}
 }

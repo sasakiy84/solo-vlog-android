@@ -13,18 +13,20 @@ import java.util.List;
 
 /** Only public camera IDs and physical IDs advertised by their logical parent are inspected. */
 final class CameraProfiles {
-    record Route(String cameraId,String physicalId,boolean cameraX,boolean recordOnly) {
-        Route{if(cameraId==null||cameraId.isBlank())throw new IllegalArgumentException("Missing camera ID");if(cameraX)recordOnly=false;}
-        Route(String cameraId,String physicalId){this(cameraId,physicalId,false,false);}
+    record Route(String cameraId,String physicalId,boolean cameraX,boolean recordOnly,int previewCorrection,int videoCorrection,int lensCorrection) {
+        Route{if(lensCorrection< -1||lensCorrection>2)throw new IllegalArgumentException("Invalid lens correction");if(previewCorrection%90!=0||videoCorrection%90!=0)throw new IllegalArgumentException("Invalid camera rotation");previewCorrection=Math.floorMod(previewCorrection,360);videoCorrection=Math.floorMod(videoCorrection,360);if(cameraId==null||cameraId.isBlank())throw new IllegalArgumentException("Missing camera ID");if(cameraX)recordOnly=false;}
+        Route(String cameraId,String physicalId){this(cameraId,physicalId,false,false,0,0,-1);}
+        Route(String cameraId,String physicalId,boolean cameraX,boolean recordOnly){this(cameraId,physicalId,cameraX,recordOnly,0,0,-1);}
+        Route withCorrection(int preview,int video,int lens){return new Route(cameraId,physicalId,cameraX,recordOnly,preview,video,lens);}
         String key(){return (cameraX?"camerax:":"camera2:")+cameraId+(physicalId==null?"":"/"+physicalId)+(recordOnly?":single":"");}
         String label(){return (cameraX?"CameraX ":"Camera2 ")+cameraId+(physicalId==null?"":" / "+physicalId)+(recordOnly?" · 互換":"");}
-        JSONObject json() throws Exception{return new JSONObject().put("cameraId",cameraId).put("physicalId",physicalId==null?JSONObject.NULL:physicalId).put("cameraX",cameraX).put("recordOnly",recordOnly);}
+        JSONObject json() throws Exception{return new JSONObject().put("cameraId",cameraId).put("physicalId",physicalId==null?JSONObject.NULL:physicalId).put("cameraX",cameraX).put("recordOnly",recordOnly).put("previewCorrection",previewCorrection).put("videoCorrection",videoCorrection).put("lensCorrection",lensCorrection);}
     }
     record Scan(List<Route> routes,JSONObject report) {}
     static Route selected(Context context){
         String raw=context.getSharedPreferences("daylog",0).getString("cameraRoute","");
         if(raw.isEmpty())return null;
-        try{JSONObject value=new JSONObject(raw);return new Route(value.getString("cameraId"),value.isNull("physicalId")?null:value.getString("physicalId"),value.optBoolean("cameraX",false),value.optBoolean("recordOnly",false));}
+        try{JSONObject value=new JSONObject(raw);return new Route(value.getString("cameraId"),value.isNull("physicalId")?null:value.getString("physicalId"),value.optBoolean("cameraX",false),value.optBoolean("recordOnly",false),value.optInt("previewCorrection",0),value.optInt("videoCorrection",0),value.optInt("lensCorrection",-1));}
         catch(Exception e){android.util.Log.w("DaylogCamera","Invalid saved camera route",e);return null;}
     }
     static void select(Context context,Route route) throws Exception{
@@ -70,7 +72,9 @@ final class CameraProfiles {
             .put("videoStabilizationModes",Arrays.toString(info.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)))
             .put("recorderSizes",map==null?"":Arrays.toString(map.getOutputSizes(android.media.MediaRecorder.class)))
             .put("previewSizes",map==null?"":Arrays.toString(map.getOutputSizes(android.graphics.SurfaceTexture.class)))
-            .put("physicalRequestKeys",String.valueOf(info.getAvailablePhysicalCameraRequestKeys()));
+            .put("physicalRequestKeys",String.valueOf(info.getAvailablePhysicalCameraRequestKeys()))
+            .put("rotateAndCropModes",Arrays.toString(info.get(CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES)))
+            .put("distortionCorrectionModes",Arrays.toString(info.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)));
     }
     static float scale(CameraManager manager,Route route) throws Exception{
         CameraCharacteristics selected=manager.getCameraCharacteristics(route.physicalId()==null?route.cameraId():route.physicalId());

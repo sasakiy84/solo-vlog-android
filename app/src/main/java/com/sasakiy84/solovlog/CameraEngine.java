@@ -105,7 +105,7 @@ public final class CameraEngine {
                 }
                 if(stage!=null&&stage.route!=null&&stage.route.cameraX()&&!selectedSuspended){
                     CameraProfiles.Route route=stage.route;
-                    selector=new CameraSelector.Builder().addCameraFilter(infos->infos.stream().filter(info->androidx.camera.camera2.interop.Camera2CameraInfo.from(info).getCameraId().equals(route.cameraId())).toList()).build();
+                    selector=new CameraSelector.Builder().addCameraFilter(infos->new java.util.ArrayList<>(infos.stream().filter(info->androidx.camera.camera2.interop.Camera2CameraInfo.from(info).getCameraId().equals(route.cameraId())).toList())).build();
                     if(lenses==null){lenses=CameraLenses.forced(selector,provider.getCameraInfo(selector),route.physicalId(),CameraProfiles.scale(context.getSystemService(android.hardware.camera2.CameraManager.class),route));requestedZoom=lenses.standard.minimum();}
                 }else if(lenses==null){lenses=CameraLenses.discover(provider,selector,front);if(stage!=null&&stage.widestOnOpen)requestedZoom=Math.min(lenses.standard.minimum(),lenses.wide==null?lenses.standard.minimum():lenses.wide.minimum());}
                 activeLens=lenses.forRatio(requestedZoom);selector=activeLens.selector();
@@ -139,7 +139,7 @@ public final class CameraEngine {
                 zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));};
                 camera.getCameraInfo().getZoomState().observe(owner,zoomObserver);
                 setZoom(requestedZoom);listener.ready();
-            }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
+            }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.diagnostic("cameraXError",e.toString());listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
     public void unbind(){stage=null;if(direct!=null){direct.close();direct=null;}preview=null;bound=false;releaseUseCases();}
