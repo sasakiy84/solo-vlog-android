@@ -22,10 +22,12 @@ final class MovieJourney {
     static void renderAndSave(Context context,UiDevice device,boolean backgroundAndAdjust,String label)throws Exception{
         long before=count(context);find(device,"レンダリング");
         DeviceImages.screenshot(context,device,"14-"+label+"-adjust");
-        find(device,"レンダリング").click();
+        var config=androidx.test.uiautomator.Configurator.getInstance();long idle=config.getWaitForIdleTimeout();
+        if(backgroundAndAdjust)config.setWaitForIdleTimeout(0);
+        try{find(device,"レンダリング").click();if(backgroundAndAdjust){UiObject2 back=device.wait(Until.findObject(By.desc("一覧に戻る")),10000);assertThat(back).isNotNull();back.click();}}finally{config.setWaitForIdleTimeout(idle);}
         if(backgroundAndAdjust){
             // The user can leave while the foreground processing service owns the render.
-            UiObject2 back=device.wait(Until.findObject(By.desc("一覧に戻る")),10000);assertThat(back).isNotNull();back.click();find(device,"日々の記録");
+            find(device,"日々の記録");
             File[] metadata=new File(context.getFilesDir(),"rendered").listFiles((dir,name)->name.endsWith(".json"));assertThat(metadata).isNotNull();
             File latest=Arrays.stream(metadata).max(Comparator.comparingLong(File::lastModified)).orElseThrow();String id=latest.getName().replace(".json","");
             long deadline=SystemClock.elapsedRealtime()+180000;MovieDraft draft=MovieDraft.load(context,id);
@@ -37,7 +39,7 @@ final class MovieJourney {
         DeviceImages.screenshot(context,device,"15-"+label+"-preview");
         if(backgroundAndAdjust){
             UiObject2 toggle=device.wait(Until.findObject(By.desc("撮影時刻を表示")),10000);assertThat(toggle).isNotNull();toggle.click();
-            assertThat(device.hasObject(By.text("保存"))).isFalse();toggle=device.wait(Until.findObject(By.desc("撮影時刻を表示")),5000);assertThat(toggle).isNotNull();toggle.click();find(device,"レンダリング").click();
+            assertThat(device.wait(Until.gone(By.text("保存")),5000)).isTrue();toggle=device.wait(Until.findObject(By.desc("撮影時刻を表示")),5000);assertThat(toggle).isNotNull();toggle.click();find(device,"レンダリング").click();
             assertThat(device.wait(Until.hasObject(By.text("レンダリング完了")),180000)).isTrue();assertThat(count(context)).isEqualTo(before);
         }
         find(device,"保存").click();assertThat(device.wait(Until.hasObject(By.text("保存しました")),60000)).isTrue();assertThat(count(context)).isEqualTo(before+1);

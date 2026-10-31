@@ -14,6 +14,17 @@ import java.io.OutputStream;
 
 final class DeviceImages {
     private DeviceImages(){}
+    static void dismissFullscreenHint(UiDevice device){
+        var confirmation=device.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.pkg(java.util.regex.Pattern.compile("android|.*systemui")).text(java.util.regex.Pattern.compile("(?i)(got it|了解|わかりました)"))),4000);
+        if(confirmation!=null){confirmation.click();device.waitForIdle();}
+    }
+    static void failure(Context context,UiDevice device,String name){
+        try{
+            screenshot(context,device,name);
+            java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(output);String xml=output.toString(java.nio.charset.StandardCharsets.UTF_8);
+            for(int n=0;n<xml.length();n+=3000)android.util.Log.e("DaylogTest",xml.substring(n,Math.min(n+3000,xml.length())));
+        }catch(Exception e){android.util.Log.e("DaylogTest","Could not capture failed UI",e);}
+    }
     static void screenshot(Context context,UiDevice device,String name) throws Exception{
         device.waitForIdle();SystemClock.sleep(1500);
         File file=File.createTempFile("daylog-screen-",".png",context.getCacheDir());

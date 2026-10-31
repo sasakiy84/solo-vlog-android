@@ -27,11 +27,11 @@ import org.junit.runner.RunWith;
 public final class NotificationJourneyTest {
     private final Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-    private UiObject2 find(androidx.test.uiautomator.BySelector selector){UiObject2 object=device.wait(Until.findObject(selector),20000);assertThat(object).isNotNull();return object;}
+    private UiObject2 find(androidx.test.uiautomator.BySelector selector){UiObject2 object=device.wait(Until.findObject(selector),20000);if(object==null)DeviceImages.failure(context,device,"notification-failure");assertThat(object).isNotNull();return object;}
     private void toggle()throws Exception{new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView(new UiSelector().description("撮影リマインダー（1時間ごと）"));find(By.desc("撮影リマインダー（1時間ごと）")).click();}
     @Test public void hourlyCaptureReminderPermissionToggleAndNotificationOpensCamera()throws Exception{
         var prefs=context.getSharedPreferences("daylog",0);prefs.edit().putBoolean("hourlyReminder",false).apply();
-        Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));DeviceImages.dismissFullscreenHint(device);
         find(By.desc("設定")).click();toggle();
         if(ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
             find(By.text(Pattern.compile("(?i)(don.t allow|許可しない)"))).click();

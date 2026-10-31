@@ -110,7 +110,7 @@ public final class LocationJourneyTest {
             for(Clip c:repository.all()){ContentValues value=new ContentValues();value.put("captured_at",c.capturedAt()-2*24*60*60*1000L);repository.getWritableDatabase().update("clips",value,"id=?",new String[]{c.id()});}
             context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("postCaptureEdit",true).putBoolean("location",false).putBoolean("sound",false).putBoolean("showTime",true).putInt("dayStart",240).commit();
             String day=JournalRules.day(System.currentTimeMillis(),240,ZoneId.systemDefault()).toString();repository.dayCaption(day,"東京・京都旅行");
-            Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));DeviceImages.dismissFullscreenHint(device);
             await(()->device.getDisplayRotation()==0);device.waitForIdle();
             Clip first=record(2);find(By.desc("撮影に戻る"));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->assertThat(androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()

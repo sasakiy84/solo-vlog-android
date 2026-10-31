@@ -34,8 +34,8 @@ public final class CameraJourneyTest {
     private final UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
     private final ClipRepository repository=ClipRepository.get(context);
 
-    private UiObject2 text(String value){UiObject2 object=device.wait(Until.findObject(By.text(value)),20000);assertThat(object).isNotNull();return object;}
-    private UiObject2 description(String value){UiObject2 object=device.wait(Until.findObject(By.desc(value)),20000);assertThat(object).isNotNull();return object;}
+    private UiObject2 text(String value){UiObject2 object=device.wait(Until.findObject(By.text(value)),20000);if(object==null)DeviceImages.failure(context,device,"camera-failure");assertThat(object).isNotNull();return object;}
+    private UiObject2 description(String value){UiObject2 object=device.wait(Until.findObject(By.desc(value)),20000);if(object==null)DeviceImages.failure(context,device,"camera-failure");assertThat(object).isNotNull();return object;}
     private void clickDescription(String value){
         long deadline=SystemClock.elapsedRealtime()+20000;
         while(true)try{description(value).click();return;}
@@ -54,8 +54,11 @@ public final class CameraJourneyTest {
         UiObject2 shutter=description(duration+"秒撮影");
         long readyDeadline=SystemClock.elapsedRealtime()+20000;
         while(!shutter.isEnabled()&&SystemClock.elapsedRealtime()<readyDeadline)SystemClock.sleep(100);
-        assertThat(shutter.isEnabled()).isTrue();if(count==0)screenshot("00-camera-start");shutter.click();
-        if(duration==5){assertThat(device.wait(Until.hasObject(By.text("録画中")),15000)).isTrue();File screen=File.createTempFile("recording-",".png",context.getCacheDir());try{assertThat(device.takeScreenshot(screen)).isTrue();publishImage(screen,"01a-recording");}finally{screen.delete();}}
+        assertThat(shutter.isEnabled()).isTrue();if(count==0)screenshot("00-camera-start");
+        if(duration==5){
+            var config=androidx.test.uiautomator.Configurator.getInstance();long idle=config.getWaitForIdleTimeout();config.setWaitForIdleTimeout(0);
+            try{shutter.click();text("録画中");File screen=File.createTempFile("recording-",".png",context.getCacheDir());try{assertThat(device.takeScreenshot(screen)).isTrue();publishImage(screen,"01a-recording");}finally{screen.delete();}}finally{config.setWaitForIdleTimeout(idle);}
+        }else shutter.click();
         long deadline=SystemClock.elapsedRealtime()+45000;
         while(repository.all().size()==count&&SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(200);
         List<Clip> after=repository.all();assertThat(after).hasSize(count+1);
@@ -72,6 +75,7 @@ public final class CameraJourneyTest {
         context.getSharedPreferences("daylog",Context.MODE_PRIVATE).edit().putBoolean("landscape",false).putBoolean("sound",false).putBoolean("showTime",true).putBoolean("postCaptureEdit",false).putBoolean("location",false).putInt("dayStart",240).commit();
         Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        DeviceImages.dismissFullscreenHint(device);
         Clip two=record(2),three=record(3),five=record(5);
         assertThat(two.landscape()).isFalse();assertThat(three.landscape()).isFalse();assertThat(five.landscape()).isFalse();
         SystemClock.sleep(5500);UiObject2 camera=description("カメラプレビュー");assertThat(camera.getVisibleBounds().width()).isAtLeast((int)(device.getDisplayWidth()*.95));assertThat(camera.getVisibleBounds().height()).isAtLeast((int)(device.getDisplayHeight()*.95));assertThat(device.hasObject(By.text("daylog"))).isFalse();screenshot("01-camera");
@@ -132,6 +136,7 @@ public final class CameraJourneyTest {
             repository.getWritableDatabase().update("clips",shifted,"id=?",new String[]{clip.id()});
         }
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        DeviceImages.dismissFullscreenHint(device);
         long rotationDeadline=SystemClock.elapsedRealtime()+20000;
         while(device.getDisplayRotation()!=1&&SystemClock.elapsedRealtime()<rotationDeadline)SystemClock.sleep(100);
         assertThat(device.getDisplayRotation()).isEqualTo(1);
