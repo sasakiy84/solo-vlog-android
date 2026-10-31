@@ -77,6 +77,14 @@ public final class LocationJourneyTest {
     }
     private void saved(){assertThat(device.wait(Until.hasObject(By.text("保存しました")),180000)).isTrue();}
     private void place(String value){click(By.desc("場所を入力"));find(By.desc("場所")).setText(value);click(By.res("android","button1"));}
+    private void selectPlace(String name){
+        BySelector selector=By.desc("場所を表示 "+name);
+        for(int attempt=0;attempt<8;attempt++){
+            UiObject2 candidate=device.wait(Until.findObject(selector),500);if(candidate!=null){candidate.click();return;}
+            find(By.clazz(android.widget.HorizontalScrollView.class)).scroll(androidx.test.uiautomator.Direction.RIGHT,.8f);
+        }
+        click(selector);
+    }
     private static byte[] samples(File file) throws Exception{
         MediaExtractor extractor=new MediaExtractor();MessageDigest digest=MessageDigest.getInstance("SHA-256");
         try{
@@ -118,7 +126,8 @@ public final class LocationJourneyTest {
                 click(By.text(Pattern.compile("(?i)(don.t allow|許可しない)")));
                 find(By.desc("クリップのテキスト"));assertThat(repository.file(first.id()).exists()).isTrue();assertThat(clip(first.id()).caption()).isEqualTo("東京に到着");
                 click(By.text("現在地を追加"));click(By.text("続ける"));
-                UiObject2 precise=device.wait(Until.findObject(By.res(Pattern.compile(".*:id/permission_location_accuracy_radio_fine"))),1500);if(precise!=null)precise.click();
+                UiObject2 precise=find(By.text(Pattern.compile("(?i)(precise|precise location|use precise location|正確|正確な位置情報)")));
+                if(!precise.isChecked())precise.click();
                 click(By.res(Pattern.compile(".*:id/permission_allow_foreground_only_button")));
             }
             await(()->ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED);
@@ -129,7 +138,7 @@ public final class LocationJourneyTest {
                 metadata.setDataSource(repository.file(first.id()).getAbsolutePath());assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)).isNotNull();
                 assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)).isEqualTo(originalRotation);
             }
-            click(By.desc("場所を表示 "+clip(first.id()).location().label()));await(()->!clip(first.id()).place().isEmpty());
+            selectPlace(clip(first.id()).location().label());await(()->!clip(first.id()).place().isEmpty());
             place("東京駅");await(()->clip(first.id()).place().equals("東京駅"));DeviceImages.screenshot(context,device,"10-post-capture-editor");
             click(By.text("次を撮る"));click(By.desc("日々の記録"));click(By.descStartsWith("クリップを再生 "));click(By.text("このクリップを保存"));saved();
             Uri individual=latestVideo();
