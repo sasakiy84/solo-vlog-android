@@ -32,7 +32,6 @@ import android.text.Editable;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.MediaController;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -85,6 +84,7 @@ public final class MainActivity extends ComponentActivity {
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
     private boolean captureBusy,cameraReady;
+    private final Runnable resumeAfterRender=this::resumeCamera;
     private int selectedSeconds=2;
     private LocalDate selectedDay;
     private boolean journalLandscape;
@@ -136,8 +136,8 @@ public final class MainActivity extends ComponentActivity {
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
     }
-    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
-    @Override protected void onDestroy(){if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
+    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
+    @Override protected void onDestroy(){main.removeCallbacks(resumeAfterRender);if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
         state.putString("screen",screen.name());state.putString("return",settingsReturn.name());
@@ -302,7 +302,15 @@ public final class MainActivity extends ComponentActivity {
     }
     private boolean locationEnabled(){return prefs.getBoolean("location",true)&&locations.granted();}
     private void resumeCamera(){
-        if(foreground&&screen==Screen.CAMERA&&!captureBusy&&!editorOpen){bindCamera();if(locationEnabled())locations.start();}
+        main.removeCallbacks(resumeAfterRender);
+        if(!foreground||screen!=Screen.CAMERA||captureBusy||editorOpen)return;
+        if(RenderService.activeId!=null){
+            camera.unbind();cameraReady=false;
+            if(shutter!=null)shutter.setEnabled(false);
+            if(liveLabel!=null){liveLabel.setText("処理中");liveLabel.setVisibility(View.VISIBLE);}
+            main.postDelayed(resumeAfterRender,500);return;
+        }
+        bindCamera();if(locationEnabled())locations.start();
     }
     private void updateLocationIcon(){
         if(locationIcon==null)return;
@@ -380,18 +388,11 @@ public final class MainActivity extends ComponentActivity {
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);
-        String dayCaption=repository.dayCaption(selectedDay.toString());
-        LinearLayout dayText=row();
-        TextView title=text(dayCaption.isEmpty()?"1日のテキスト":dayCaption,16,dayCaption.isEmpty()?Ui.MUTED:Ui.INK);
-        dayText.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        dayText.addView(new Ui.Icon(this,"edit",Ui.MUTED,null,null),lp(48,48));
-        Ui.touch(dayText,Ui.BG,8);dayText.setContentDescription("1日のテキストを編集");dayText.setOnClickListener(v->editDayCaption());
-        content.addView(dayText,lp(-1,-2));gap(content,12);
         journalLandscape=orientationFor(selectedDay);
         List<Clip> list=clips(selectedDay,journalLandscape,false),selected=clips(selectedDay,journalLandscape,true);
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
         LinearLayout summary=row();
-        TextView count=bold(selected.size()+"本 · "+seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
+        TextView count=bold(seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
         TextView save=button("レンダリング","library",true,()->export(selected,selectedDay.toString(),journalLandscape));
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
@@ -432,22 +433,20 @@ public final class MainActivity extends ComponentActivity {
     private EditText captionInput(String value,String label,int limit){
         EditText input=new EditText(this);input.setText(value);input.setHint(label);input.setContentDescription(label);
         input.setTextSize(16);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        input.setMinLines(3);input.setMaxLines(5);input.setMinHeight(dp(112));input.setGravity(Gravity.TOP|Gravity.START);input.setPadding(dp(12),dp(16),dp(12),dp(16));input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;
+        input.setMinLines(1);input.setMaxLines(4);input.setMinHeight(dp(56));input.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);input.setPadding(dp(4),dp(12),dp(4),dp(6));input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;
     }
     private final class EditorPreview {
         final Ui.AspectFrame frame;
         final VideoView video;
         final CaptionOverlay.Preview captions;
-        EditorPreview(Clip clip,String day){
+        EditorPreview(Clip clip,String dayCaption){
             frame=new Ui.AspectFrame(MainActivity.this,clip.landscape());
             video=new VideoView(MainActivity.this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
-            captions=new CaptionOverlay.Preview(MainActivity.this,clip,day,prefs.getBoolean("showTime",true));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
-            MediaController controller=new MediaController(MainActivity.this);controller.setAnchorView(video);video.setMediaController(controller);
-            video.setVideoPath(repository.file(clip.id()).getAbsolutePath());
+            captions=new CaptionOverlay.Preview(MainActivity.this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
             video.setOnPreparedListener(player->{player.setLooping(true);video.start();});
             video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});
         }
-        void start(Clip clip){captions.startProbing(video,repository.file(clip.id()),io);}
+        void start(Clip clip){video.setVideoPath(repository.file(clip.id()).getAbsolutePath());captions.loadColors(repository.file(clip.id()),io);}
     }
     private void focusEditor(EditText input,AlertDialog dialog){
         input.setSingleLine(true);input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
@@ -461,28 +460,9 @@ public final class MainActivity extends ComponentActivity {
         });
         input.requestFocus();if(input.hasWindowFocus())window.getInsetsController().show(WindowInsets.Type.ime());
     }
-    private void editDayCaption(){
-        LocalDate day=selectedDay;LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);
-        List<Clip> clips=clips(day,orientationFor(day),false);Clip first=clips.isEmpty()?null:clips.get(0);
-        EditorPreview panel=first==null?null:new EditorPreview(first,repository.dayCaption(day.toString()));
-        if(panel!=null){content.addView(panel.frame,lp(-1,180));gap(content,12);}
-        EditText input=captionInput(repository.dayCaption(day.toString()),"1日のテキスト",80);input.setHint(null);content.addView(input,lp(-1,-2));
-        Runnable save=()->{try{repository.dayCaption(day.toString(),input.getText().toString());}catch(RuntimeException e){toast("テキストを保存できませんでした");}};activeEditorSave=save;
-        input.addTextChangedListener(new TextWatcher(){
-            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
-            @Override public void onTextChanged(CharSequence s,int start,int before,int count){
-                if(panel!=null)panel.captions.update(first,s.toString(),prefs.getBoolean("showTime",true));main.removeCallbacks(save);main.postDelayed(save,250);
-            }
-            @Override public void afterTextChanged(Editable s){}
-        });
-        ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("1日のテキスト").setView(scroll).setPositiveButton("閉じる",null).create();
-        dialog.setOnDismissListener(d->{main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;if(panel!=null)panel.video.stopPlayback();if(!isDestroyed())render();});
-        dialog.show();if(panel!=null)panel.start(first);focusEditor(input,dialog);
-    }
     private void review(Clip clip){
         if(editorOpen||isDestroyed())return;editorOpen=true;cameraReady=false;camera.unbind();locations.stop();
-        Runnable[] refreshChoices={null};Clip[] edited={clip};boolean[] deleted={false},leavingForExport={false};
+        Runnable[] refreshChoices={null};Clip[] edited={clip};boolean[] deleted={false};
         String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
         LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);
         EditorPreview panel=new EditorPreview(clip,repository.dayCaption(day));
@@ -492,11 +472,11 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout locationLine=row();locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(52),1));content.addView(locationLine,lp(-1,52));gap(content,8);
         EditText input=captionInput(clip.caption(),"クリップのテキスト",120);content.addView(input,lp(-1,-2));
         Runnable save=()->{if(!deleted[0])try{repository.caption(clip.id(),edited[0].caption());repository.place(clip.id(),edited[0].place());}catch(RuntimeException e){toast("編集内容を保存できませんでした");}};activeEditorSave=save;
-        Runnable refreshPreview=()->panel.captions.update(edited[0],repository.dayCaption(day),prefs.getBoolean("showTime",true));
+        Runnable refreshPreview=()->panel.captions.update(edited[0],repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
         ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
             .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
-        TextView saveVideo=button("レンダリング","library",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
+        TextView saveVideo=button("保存","download",true,()->{});saveVideo.setOnClickListener(v->{save.run();saveClip(edited[0],saveVideo,panel);});
         java.util.function.Consumer<String> selectPlace=name->{prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
         refreshChoices[0]=()->{
             choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
@@ -514,12 +494,36 @@ public final class MainActivity extends ComponentActivity {
         gap(content,12);content.addView(saveVideo,lp(-1,48));
         dialog.setOnDismissListener(d->{
             main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.video.stopPlayback();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
-            if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();if(!leavingForExport[0])resumeCamera();}}
+            if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();resumeCamera();}}
         });
         dialog.show();dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？")
             .setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{try{repository.delete(clip.id());deleted[0]=true;thumbnails.remove(clip.id());dialog.dismiss();}catch(RuntimeException e){toast("削除できませんでした");}}).show());
         refreshChoices[0].run();panel.start(clip);
         if(clip.location()!=null)resolvePlaces(clip,names->{if(dialog.isShowing())refreshChoices[0].run();});
+    }
+    private void saveClip(Clip clip,TextView control,EditorPreview preview){
+        if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}
+        String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
+        String initial=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        LinearLayout form=column();padded(form,20);EditText name=captionInput(initial,"保存名",80);name.setSingleLine(true);form.addView(name,lp(-1,64));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("クリップを保存").setView(form).setPositiveButton("保存",null).setNegativeButton("キャンセル",null).create();
+        dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String filename;try{filename=VideoExporter.fileName(name.getText().toString());}catch(IllegalArgumentException e){name.setError("保存名を確認してください");return;}
+            if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}
+            MovieDraft draft=MovieDraft.create(day,List.of(clip.id()),repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
+            draft.fileName=filename;draft.status="rendering";
+            try{draft.save(this);preview.video.stopPlayback();RenderService.activeId=draft.id;androidx.core.content.ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id).putExtra("save_after_render",true));}
+            catch(Exception e){RenderService.activeId=null;android.util.Log.e("Daylog","Could not save clip",e);toast("保存を開始できませんでした");return;}
+            dialog.dismiss();control.setEnabled(false);control.setText("保存中");
+            main.post(new Runnable(){@Override public void run(){
+                if(isDestroyed())return;
+                try{MovieDraft current=MovieDraft.load(MainActivity.this,draft.id);
+                    if("rendering".equals(current.status)||"saving".equals(current.status)){main.postDelayed(this,500);return;}
+                    control.setEnabled(true);control.setText("保存");toast(current.savedUri.isEmpty()?current.error:"保存しました");
+                    if(control.isAttachedToWindow())preview.start(clip);
+                }catch(Exception e){android.util.Log.w("Daylog","Could not read clip save state",e);control.setEnabled(true);control.setText("保存");toast("保存状況を確認できませんでした");}
+            }});
+        });
     }
     private void editPlaceName(Clip[] edited,Runnable save,Runnable refreshPreview,Runnable refreshChoices){
         LinearLayout form=column();padded(form,20);EditText input=captionInput(edited[0].place(),"場所",80);input.setHint(null);form.addView(input,lp(-1,-2));
@@ -566,6 +570,7 @@ public final class MainActivity extends ComponentActivity {
         content.addView(day);gap(content,24);
         content.addView(settingToggle("撮影後に編集",prefs.getBoolean("postCaptureEdit",true),()->{prefs.edit().putBoolean("postCaptureEdit",!prefs.getBoolean("postCaptureEdit",true)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("位置情報を記録",locationEnabled(),this::toggleLocation));gap(content,1);
+        content.addView(settingToggle("年月日を表示",prefs.getBoolean("showDate",false),()->{prefs.edit().putBoolean("showDate",!prefs.getBoolean("showDate",false)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("撮影時刻を表示",prefs.getBoolean("showTime",true),()->{prefs.edit().putBoolean("showTime",!prefs.getBoolean("showTime",true)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("音声",sound(),this::toggleSound));gap(content,1);
         content.addView(settingToggle("グリッド",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,32);
@@ -576,6 +581,10 @@ public final class MainActivity extends ComponentActivity {
         content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);
         content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",(repository.bytes()+MovieDraft.bytes(this))/1048576f),14,Ui.MUTED));gap(content,12);
         content.addView(text("アプリを削除すると、書き出していない動画も削除されます。",12,Ui.MUTED));
+        gap(content,24);
+        try{String version=getPackageManager().getPackageInfo(getPackageName(),0).versionName;LinearLayout versionRow=row();versionRow.setPadding(dp(4),dp(12),dp(4),dp(12));TextView label=text("バージョン",16,Ui.INK);label.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(label,new LinearLayout.LayoutParams(0,dp(40),1));TextView value=text(version==null?"—":version,15,Ui.MUTED);value.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(value,lp(-2,40));content.addView(versionRow);}
+        catch(android.content.pm.PackageManager.NameNotFoundException e){android.util.Log.w("Daylog","Version unavailable",e);}
+
     }
     private LinearLayout preferenceRow(String title,String value){
         LinearLayout item=row();item.setPadding(dp(4),dp(12),dp(4),dp(12));Ui.touch(item,Ui.BG,8);

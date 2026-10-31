@@ -34,6 +34,9 @@ public final class JournalRules {
             .map(Clip::landscape).orElse(fallback);
     }
 
+    public static String captureDate(Clip clip){
+        return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd"));
+    }
     public static String captureTime(Clip clip){
         return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId()))
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));

@@ -16,7 +16,7 @@ Android 16 以上向けの、短い動画を1日分にまとめる個人用 Vlog
 ## リリース
 
 ```sh
-python3 scripts/release.py 1.0.4
+python3 scripts/release.py 1.0.5
 ```
 
 GitHub Actions はリリース用のみです。テスト・lint は実行せず、署名付き APK とチェックサムを GitHub Releases に公開します。

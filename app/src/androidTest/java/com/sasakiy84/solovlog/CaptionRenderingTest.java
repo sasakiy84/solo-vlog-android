@@ -60,7 +60,7 @@ public final class CaptionRenderingTest {
                 });
                 assertThat(prepared.await(180,TimeUnit.SECONDS)).isTrue();if(preparationError.get()!=null)throw new AssertionError(preparationError.get());
                 items.add(new EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(footage)))
-                    .setEffects(new Effects(List.of(),List.of(new CaptionOverlay(footage,clip,"Kyoto",true)))).build());
+                    .setEffects(new Effects(List.of(),List.of(CaptionOverlay.prepare(context,footage,clip,"Kyoto",true,false)))).build());
             }
             Composition composition=new Composition.Builder(new EditedMediaItemSequence.Builder(items).build()).build();
             File output=File.createTempFile("contrast-",".mp4",context.getCacheDir());files.add(output);assertThat(output.delete()).isTrue();

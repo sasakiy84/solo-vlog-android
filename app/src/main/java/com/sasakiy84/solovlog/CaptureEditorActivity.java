@@ -102,9 +102,9 @@ public final class CaptureEditorActivity extends ComponentActivity {
         toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new VideoView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
-        captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
+        captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
         content.addView(frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
-        video.setVideoPath(repository.file(clip.id()).getAbsolutePath());video.setOnPreparedListener(player->{player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});captions.startProbing(video,repository.file(clip.id()),io);
+        video.setVideoPath(repository.file(clip.id()).getAbsolutePath());video.setOnPreparedListener(player->{player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});captions.loadColors(repository.file(clip.id()),io);
         LinearLayout locationLine=row();placeScroll=new HorizontalScrollView(this){
             @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
                 if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN)placeGesture=true;
@@ -113,7 +113,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
                 return handled;
             }
         };placeScroll.setHorizontalScrollBarEnabled(false);choices=row();placeScroll.addView(choices);locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(64),1));locationLine.addView(new Ui.Icon(this,"edit",Ui.INK,"場所を入力",this::editPlace),size(48,48));LinearLayout.LayoutParams locationParams=size(-1,64);locationParams.topMargin=dp(12);locationParams.bottomMargin=dp(8);content.addView(locationLine,locationParams);
-        EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");input.setSingleLine(false);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(3);input.setMaxLines(5);input.setMinHeight(dp(112));input.setGravity(Gravity.TOP|Gravity.START);input.setPadding(dp(12),dp(16),dp(12),dp(16));content.addView(input,size(-1,-2));
+        EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");input.setSingleLine(false);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(1);input.setMaxLines(4);input.setMinHeight(dp(56));input.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);input.setPadding(dp(4),dp(12),dp(4),dp(6));content.addView(input,size(-1,-2));
         input.addTextChangedListener(watcher(()->{clip=clip.withCaption(input.getText().toString());changed();}));
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){saveAndReview();return true;}return false;});
         LinearLayout footer=row();footer.setPadding(dp(20),dp(8),dp(20),dp(8));TextView delete=button("削除",false,this::confirmDelete);footer.addView(delete,size(72,48));View space=new View(this);footer.addView(space,new LinearLayout.LayoutParams(0,1,1));footer.addView(button("保存",true,this::saveAndReview),size(120,48));root.addView(footer,size(-1,64));
@@ -125,7 +125,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     }
     private EditText textInput(String value,String description,int limit){EditText input=new EditText(this);input.setText(value);input.setTextSize(16);input.setContentDescription(description);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setSingleLine(true);input.setImeOptions(EditorInfo.IME_ACTION_DONE|EditorInfo.IME_FLAG_NO_EXTRACT_UI);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;}
     private TextWatcher watcher(Runnable changed){return new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){changed.run();}@Override public void afterTextChanged(Editable s){}};}
-    private void changed(){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true));main.removeCallbacks(save);main.postDelayed(save,250);}
+    private void changed(){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));main.removeCallbacks(save);main.postDelayed(save,250);}
     private boolean saveEdits(){if(deleted||clip==null)return false;try{repository.caption(clip.id(),clip.caption());repository.place(clip.id(),clip.place());return true;}catch(RuntimeException e){android.util.Log.w("DaylogEditor","Could not save edits",e);toast("編集内容を保存できませんでした");return false;}}
     private void saveAndReview(){main.removeCallbacks(save);if(!saveEdits())return;String day=JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString();startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("review_day",day).putExtra("edits_saved",true));finish();}
     private void refreshPlaces(){
@@ -138,7 +138,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
         if(deleted||!prefs.getBoolean("location",true)||!locations.granted()||!clip.place().isBlank()||prefs.getBoolean("placeChoice_"+clip.id(),false))return;
         String city=PlaceResolver.defaultCity(names);if(city.isEmpty())return;
         clip=clip.withPlace(city);markPlaceChoice();repository.place(clip.id(),city);
-        if(!isDestroyed()){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true));refreshPlaces();}
+        if(!isDestroyed()){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));refreshPlaces();}
     }
     private void resolvePlaces(){
         if(clip.location()==null)return;

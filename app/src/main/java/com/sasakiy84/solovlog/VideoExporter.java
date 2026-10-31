@@ -1,6 +1,8 @@
 package com.sasakiy84.solovlog;
 
 import android.content.ContentValues;
+import android.media.MediaMetadataRetriever;
+import android.media.metrics.LogSessionId;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Environment;
@@ -9,8 +11,14 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Log;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.Effect;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.common.util.Clock;
+import androidx.media3.effect.Presentation;
+import androidx.media3.transformer.DefaultAssetLoaderFactory;
+import androidx.media3.transformer.DefaultDecoderFactory;
+import androidx.media3.transformer.DefaultEncoderFactory;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
@@ -36,25 +44,40 @@ public final class VideoExporter {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private Transformer transformer;
+    private boolean preparing;
+    private volatile int renderGeneration;
     private File currentOutput;
     private static final Object GALLERY_SAVE_LOCK=new Object();
     private static final java.util.Set<String> SAVING=java.util.concurrent.ConcurrentHashMap.newKeySet();
     static boolean isSaving(File file){return SAVING.contains(file.getAbsolutePath());}
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
 
-    public void render(List<Clip> clips, ClipRepository repository, String dayCaption, boolean showTime, boolean includeAudio, RenderListener listener) {
-        if (clips.isEmpty()) { listener.error("保存するクリップを選んでください。"); return; }
-        if (transformer != null) { listener.error("現在の保存が終わるまでお待ちください。"); return; }
-        List<EditedMediaItem> items = new ArrayList<>();
-        for (Clip clip : clips) {
-            if (!repository.file(clip.id()).isFile()) { listener.error("元のクリップが見つかりません。"); return; }
-            MediaItem item = new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
-                .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build();
-            EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio);
-            if(!dayCaption.isBlank()||showTime||!clip.caption().isBlank()||!clip.place().isBlank())
-                edited.setEffects(new Effects(List.of(),List.of(new CaptionOverlay(repository.file(clip.id()),clip,dayCaption,showTime))));
-            items.add(edited.build());
-        }
+    public void render(List<Clip> clips,ClipRepository repository,String dayCaption,boolean showTime,boolean showDate,boolean includeAudio,RenderListener listener){
+        if(clips.isEmpty()){listener.error("保存するクリップを選んでください。");return;}
+        if(transformer!=null||preparing){listener.error("現在の処理が終わるまでお待ちください。");return;}
+        preparing=true;int generation=++renderGeneration;
+        // Decode color samples before Transformer reserves its decoder and GL context.
+        io.execute(()->{
+            try{
+                List<EditedMediaItem> items=new ArrayList<>();boolean highResolution=false;
+                for(Clip clip:clips){
+                    if(generation!=renderGeneration)return;
+                    File source=repository.file(clip.id());if(!source.isFile())throw new java.io.FileNotFoundException("Missing source clip");
+                    try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
+                        media.setDataSource(source.getAbsolutePath());int width=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));int height=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));highResolution|=Math.max(width,height)>1920;
+                    }
+                    MediaItem item=new MediaItem.Builder().setUri(Uri.fromFile(source))
+                        .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build();
+                    EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio);
+                    if(!dayCaption.isBlank()||showTime||showDate||!clip.caption().isBlank()||!clip.place().isBlank())
+                        edited.setEffects(new Effects(List.of(),List.of(CaptionOverlay.prepare(context,source,clip,dayCaption,showTime,showDate))));
+                    items.add(edited.build());
+                }
+                boolean large=highResolution;main.post(()->{if(generation!=renderGeneration)return;preparing=false;startRender(items,clips,large,false,listener);});
+            }catch(Exception e){Log.e("DaylogExport","Could not prepare clips",e);main.post(()->{if(generation!=renderGeneration)return;preparing=false;listener.error("元の動画を読み込めませんでした。元動画は残っています。");});}
+        });
+    }
+    private void startRender(List<EditedMediaItem> items,List<Clip> clips,boolean highResolution,boolean reducedResolution,RenderListener listener){
         EditedMediaItemSequence sequence = new EditedMediaItemSequence.Builder(items).experimentalSetForceAudioTrack(true).build();
         Composition composition = new Composition.Builder(sequence).build();
         File output;
@@ -62,6 +85,10 @@ public final class VideoExporter {
         catch (Exception e) { listener.error("書き出し用の空き容量を確保できませんでした。"); return; }
         currentOutput=output;
         transformer = new Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setEncoderFactory(new DefaultEncoderFactory.Builder(context).setEnableFallback(true).build())
+            .setAssetLoaderFactory(new DefaultAssetLoaderFactory(
+                context,new DefaultDecoderFactory.Builder(context).setEnableDecoderFallback(true).build(),
+                Clock.DEFAULT,LogSessionId.LOG_SESSION_ID_NONE))
             .setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build())
             .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips)))
             .addListener(new Transformer.Listener() {
@@ -70,8 +97,29 @@ public final class VideoExporter {
                     currentOutput=null;listener.rendered(output);
                 }
                 @Override public void onError(Composition result, ExportResult exportResult, ExportException exception) {
-                    Log.e("DaylogExport", "Video export failed", exception);
-                    transformer = null; currentOutput=null;output.delete(); listener.error("動画をまとめられませんでした。元のクリップは残っています。");
+                    Log.e("DaylogExport", "Video export failed: "+exception.getErrorCodeName(), exception);
+                    transformer = null;currentOutput=null;output.delete();
+                    int code=exception.errorCode;
+                    boolean videoFailure=switch(code){
+                        case ExportException.ERROR_CODE_ENCODER_INIT_FAILED,
+                             ExportException.ERROR_CODE_ENCODING_FAILED,
+                             ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,
+                             ExportException.ERROR_CODE_DECODER_INIT_FAILED,
+                             ExportException.ERROR_CODE_DECODING_FAILED,
+                             ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED,
+                             ExportException.ERROR_CODE_MUXING_TIMEOUT -> true;
+                        default -> false;
+                    };
+                    if(highResolution&&!reducedResolution&&videoFailure){
+                        List<EditedMediaItem> resized=new ArrayList<>();
+                        for(int i=0;i<items.size();i++){
+                            EditedMediaItem item=items.get(i);boolean wide=clips.get(i).landscape();List<Effect> effects=new ArrayList<>();
+                            effects.add(Presentation.createForWidthAndHeight(wide?1920:1080,wide?1080:1920,Presentation.LAYOUT_SCALE_TO_FIT));effects.addAll(item.effects.videoEffects);
+                            resized.add(item.buildUpon().setEffects(new Effects(item.effects.audioProcessors,effects)).build());
+                        }
+                        int generation=renderGeneration;main.post(()->{if(generation==renderGeneration)startRender(resized,clips,true,true,listener);});return;
+                    }
+                    listener.error("動画をまとめられませんでした。元のクリップは残っています。");
                 }
             }).build();
         try { transformer.start(composition, output.getAbsolutePath()); }
@@ -82,8 +130,8 @@ public final class VideoExporter {
         String path=file.getAbsolutePath();if(!SAVING.add(path))return;
         io.execute(()->{try{Uri uri; synchronized(GALLERY_SAVE_LOCK){uri=copyToGallery(file,fileName(name));}main.post(()->{try{listener.saved(uri);}finally{SAVING.remove(path);}});}catch(Exception e){Log.e("DaylogExport","Gallery save failed",e);main.post(()->{try{listener.error("保存できませんでした。レンダリング済み動画は残っています。");}finally{SAVING.remove(path);}});}});
     }
-    public int progress(){if(transformer==null)return 0;androidx.media3.transformer.ProgressHolder holder=new androidx.media3.transformer.ProgressHolder();return transformer.getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE?holder.progress:-1;}
-    public void cancel(){if(transformer!=null){transformer.cancel();transformer=null;}if(currentOutput!=null){currentOutput.delete();currentOutput=null;}}
+    public int progress(){if(preparing)return -1;if(transformer==null)return 0;androidx.media3.transformer.ProgressHolder holder=new androidx.media3.transformer.ProgressHolder();return transformer.getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE?holder.progress:-1;}
+    public void cancel(){renderGeneration++;preparing=false;if(transformer!=null){transformer.cancel();transformer=null;}if(currentOutput!=null){currentOutput.delete();currentOutput=null;}}
     public void close(){cancel();io.shutdown();}
 
     static String fileName(String value){
