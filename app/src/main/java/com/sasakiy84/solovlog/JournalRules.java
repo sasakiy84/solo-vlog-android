@@ -35,14 +35,14 @@ public final class JournalRules {
     }
 
     public static String captureDate(Clip clip){
-        return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd"));
+        return Instant.ofEpochMilli(clip.capturedAt()+clip.trimStartMs()).atZone(ZoneId.of(clip.zoneId())).format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd"));
     }
     public static String captureTime(Clip clip){
-        return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId()))
+        return Instant.ofEpochMilli(clip.capturedAt()+clip.trimStartMs()).atZone(ZoneId.of(clip.zoneId()))
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
     }
     public static long exportDuration(Clip clip) {
-        return Math.min(clip.durationMs(), clip.plannedSeconds() * 1000L);
+        return clip.trimEndMs()-clip.trimStartMs();
     }
 
     /** Surface rotation is expressed in quarter turns (0 or 1), including front-facing sensors. */

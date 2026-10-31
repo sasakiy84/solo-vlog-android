@@ -47,7 +47,7 @@ public final class MovieActivity extends ComponentActivity {
     private long previewPosition;
     private String previewClipId="",observedRenderId;
     private CaptionOverlay.Preview captions;
-    private TextView state,render,save,open;
+    private TextView state,render,save;
     private LinearLayout settings,fileNameSection;
     private EditText fileNameInput;
     private boolean showingResult,saving,keyboardVisible,foreground;
@@ -102,7 +102,7 @@ public final class MovieActivity extends ComponentActivity {
             @Override public void afterTextChanged(Editable s){}
         });
         toggle("年月日を表示",draft.showDate,value->{draft.showDate=value;changed();});toggle("撮影時刻を表示",draft.showTime,value->{draft.showTime=value;changed();});toggle("クリップのテキストを表示",draft.showText,value->{draft.showText=value;changed();});toggle("場所を表示",draft.showPlace,value->{draft.showPlace=value;changed();});toggle("音声を含める",draft.audio,value->{draft.audio=value;changed();});
-        LinearLayout actions=column();actions.setPadding(dp(20),dp(8),dp(20),dp(12));render=button("レンダリング",true,this::startRender);actions.addView(render,size(-1,56));save=button("保存",true,this::saveToPhone);LinearLayout.LayoutParams params=size(-1,56);params.topMargin=dp(12);actions.addView(save,params);open=button("開く",false,()->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(draft.savedUri),"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("端末の動画アプリから開けます");}});LinearLayout.LayoutParams openParams=size(-1,56);openParams.topMargin=dp(12);actions.addView(open,openParams);root.addView(actions,size(-1,-2));
+        LinearLayout actions=column();actions.setPadding(dp(20),dp(8),dp(20),dp(12));render=button("レンダリング",true,this::startRender);actions.addView(render,size(-1,56));save=button("保存",true,()->{if(draft.savedUri.isEmpty())saveToPhone();else openSavedMovie();});LinearLayout.LayoutParams params=size(-1,56);params.topMargin=dp(12);actions.addView(save,params);root.addView(actions,size(-1,-2));
         root.setFocusableInTouchMode(true);root.requestFocus();updateUi();
     }
     private void toggle(String label,boolean checked,java.util.function.Consumer<Boolean> changed){LinearLayout line=row();line.addView(Ui.text(this,label,16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));Switch control=new Switch(this);control.setContentDescription(label);control.setChecked(checked);control.setOnCheckedChangeListener((v,value)->changed.accept(value));line.addView(control,size(56,48));settings.addView(line,size(-1,56));controls.add(control);}
@@ -136,9 +136,9 @@ public final class MovieActivity extends ComponentActivity {
     private void refreshState(){if(isFinishing())return;try{MovieDraft current=MovieDraft.load(this,draft.id);if(!current.status.equals(draft.status)||!current.savedUri.equals(draft.savedUri)||!java.util.Objects.equals(observedRenderId,RenderService.activeId)){draft=current;updateUi();}else if("rendering".equals(current.status))updateUi();}catch(Exception e){android.util.Log.w("DaylogMovie","Could not read render state",e);}}
     private void updateUi(){
         if(video==null)return;observedRenderId=RenderService.activeId;boolean busy="rendering".equals(draft.status)||observedRenderId!=null,ready=("ready".equals(draft.status)||"saving".equals(draft.status))&&draft.movie(this).isFile();saving="saving".equals(draft.status);
-        for(View control:controls)control.setEnabled(!busy&&!saving);render.setVisibility(keyboardVisible&&ready?View.GONE:View.VISIBLE);render.setEnabled(!busy&&!saving);render.setAlpha(busy||saving?.45f:1f);render.setText(busy?"レンダリング中":"レンダリング");save.setVisibility(ready?View.VISIBLE:View.GONE);save.setEnabled(!saving&&draft.savedUri.isEmpty());save.setText(saving?"保存中":draft.savedUri.isEmpty()?"保存":"保存済み");open.setVisibility(draft.savedUri.isEmpty()?View.GONE:View.VISIBLE);
+        for(View control:controls)control.setEnabled(!busy&&!saving);render.setVisibility(keyboardVisible&&ready?View.GONE:View.VISIBLE);render.setEnabled(!busy&&!saving);render.setAlpha(busy||saving?.45f:1f);render.setText(busy?"レンダリング中":"レンダリング");save.setVisibility(ready?View.VISIBLE:View.GONE);save.setEnabled(!saving);save.setText(saving?"保存中":draft.savedUri.isEmpty()?"保存":"開く");
         fileNameSection.setVisibility(ready?View.VISIBLE:View.GONE);
-        state.setText(busy?"レンダリング中":ready?(draft.savedUri.isEmpty()?"レンダリング完了"+(draft.outputResolution.isEmpty()?"":" · "+draft.outputResolution):"保存しました"):"error".equals(draft.status)?draft.error:"");
+        state.setText(busy?"レンダリング中":ready?(draft.savedUri.isEmpty()?"レンダリング完了"+(draft.outputResolution.isEmpty()?"":" · "+draft.outputResolution):""):"error".equals(draft.status)?draft.error:"");
         state.setVisibility(state.getText().length()==0?View.GONE:View.VISIBLE);
         if(!foreground){releasePlayer();return;}
         if(busy){releasePlayer();video.setVisibility(View.INVISIBLE);captions.setVisibility(View.GONE);return;}
@@ -151,13 +151,14 @@ public final class MovieActivity extends ComponentActivity {
             if(showingResult||missing){
                 showingResult=false;List<MediaItem> playlist=new ArrayList<>();
                 for(Clip clip:draft.clips(repository))playlist.add(new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
-                    .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build());
+                    .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
                 int index=Math.max(0,Math.min(previewIndex,playlist.size()-1));long position=Math.min(previewPosition,Math.max(0,JournalRules.exportDuration(draft.clips(repository).get(index))-1));
                 player.setMediaItems(playlist,index,position);player.prepare();player.play();
             }
             updatePreviewCaption();
         }
     }
+    private void openSavedMovie(){try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(draft.savedUri),"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("端末の動画アプリから開けます");}}
     private void saveToPhone(){if(saving||!"ready".equals(draft.status)||!draft.savedUri.isEmpty())return;String name;
         try{name=VideoExporter.fileName(draft.fileName);}catch(IllegalArgumentException e){fileNameInput.setError("保存名を確認してください");fileNameInput.requestFocus();return;}
         if(!name.equals(draft.fileName)){draft.fileName=name;fileNameInput.setText(name);}

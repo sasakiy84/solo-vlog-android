@@ -42,7 +42,7 @@ final class MovieDraft {
         AtomicFile target=metadata(context);FileOutputStream stream=null;try{stream=target.startWrite();stream.write(data.toString().getBytes(StandardCharsets.UTF_8));target.finishWrite(stream);}catch(Exception e){if(stream!=null)target.failWrite(stream);throw e;}
     }
     static String signature(List<Clip> clips,String day,String caption,boolean showTime,boolean showDate){
-        String source="captions-v3\n"+clips+"\n"+day+"\n"+caption+"\n"+showTime+"\n"+showDate;
+        String source="captions-v4\n"+clips+"\n"+day+"\n"+caption+"\n"+showTime+"\n"+showDate;
         try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8)));}
         catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
     }

@@ -57,7 +57,7 @@ final class CaptionOverlay implements GlEffect {
         }
         if(!dayCaption.isBlank())heading=new Label(mask(dayCaption,edge*.057f,Math.round(w*.9f),3),marginX,marginY);
         if(!clip.caption().isBlank()){
-            Bitmap mask=mask(clip.caption(),edge*.06f,Math.max(1,Math.round(available)),6);
+            Bitmap mask=mask(clip.caption(),edge*.072f,Math.max(1,Math.round(available)),6);
             caption=new Label(mask,marginX,h-marginY-mask.getHeight());
         }
         if(!clip.place().isBlank()){
@@ -94,7 +94,7 @@ final class CaptionOverlay implements GlEffect {
         try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
             media.setDataSource(source.getAbsolutePath());
             long duration=JournalRules.exportDuration(clip)*1000L;
-            for(int i=0;i<frames.length;i++)frames[i]=media.getScaledFrameAtTime(duration*(i*4+1)/10,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,clip.landscape()?320:180,clip.landscape()?180:320);
+            for(int i=0;i<frames.length;i++)frames[i]=media.getScaledFrameAtTime(clip.trimStartMs()*1000L+duration*(i*4+1)/10,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,clip.landscape()?320:180,clip.landscape()?180:320);
         }catch(Exception e){android.util.Log.w("DaylogCaptions","Clip color samples unavailable",e);}
         return frames;
     }

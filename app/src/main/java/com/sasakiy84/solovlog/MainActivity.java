@@ -37,7 +37,11 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.VideoView;
+import android.view.TextureView;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.exoplayer.ExoPlayer;
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
@@ -89,6 +93,13 @@ public final class MainActivity extends ComponentActivity {
     private LocalDate selectedDay;
     private boolean journalLandscape;
     private Clip lastSaved;
+
+    private final ActivityResultLauncher<Intent> trimEditor=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
+        if(result.getResultCode()!=RESULT_OK||result.getData()==null)return;
+        String id=result.getData().getStringExtra("clip_id");thumbnails.remove(id);
+        if(screen==Screen.JOURNAL)render();
+        repository.all().stream().filter(clip->clip.id().equals(id)).findFirst().ifPresent(this::review);
+    });
 
     private final ActivityResultLauncher<String[]> permissions=registerForActivityResult(
         new ActivityResultContracts.RequestMultiplePermissions(),result->{
@@ -423,7 +434,7 @@ public final class MainActivity extends ComponentActivity {
         else io.execute(()->{
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(repository.file(clip.id()).getAbsolutePath());
-                Bitmap bitmap=media.getScaledFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,400,400);
+                Bitmap bitmap=media.getScaledFrameAtTime(clip.trimStartMs()*1000L,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,400,400);
                 if(bitmap!=null){thumbnails.put(clip.id(),bitmap);main.post(()->{if(!isDestroyed())image.setImageBitmap(bitmap);});}
             }catch(Exception e){main.post(()->{if(!isDestroyed())image.setContentDescription("プレビューを読み込めません。タップして再生");});}
         });
@@ -437,16 +448,22 @@ public final class MainActivity extends ComponentActivity {
     }
     private final class EditorPreview {
         final Ui.AspectFrame frame;
-        final VideoView video;
+        final TextureView video;
         final CaptionOverlay.Preview captions;
+        ExoPlayer player;
         EditorPreview(Clip clip,String dayCaption){
             frame=new Ui.AspectFrame(MainActivity.this,clip.landscape());
-            video=new VideoView(MainActivity.this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+            video=new TextureView(MainActivity.this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
             captions=new CaptionOverlay.Preview(MainActivity.this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
-            video.setOnPreparedListener(player->{player.setLooping(true);video.start();});
-            video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});
         }
-        void start(Clip clip){video.setVideoPath(repository.file(clip.id()).getAbsolutePath());captions.loadColors(repository.file(clip.id()),io);}
+        void start(Clip clip){
+            stop();player=new ExoPlayer.Builder(MainActivity.this).build();player.setVideoTextureView(video);player.setRepeatMode(Player.REPEAT_MODE_ONE);
+            player.addListener(new Player.Listener(){@Override public void onPlayerError(PlaybackException error){android.util.Log.w("DaylogPreview","Clip playback failed",error);toast("動画を再生できませんでした");}});
+            player.setMediaItem(new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
+                .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
+            player.prepare();player.play();captions.loadColors(repository.file(clip.id()),io);
+        }
+        void stop(){if(player!=null){player.release();player=null;}}
     }
     private void focusEditor(EditText input,AlertDialog dialog){
         input.setSingleLine(true);input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
@@ -470,13 +487,17 @@ public final class MainActivity extends ComponentActivity {
         gap(content,10);
         HorizontalScrollView placeScroll=new HorizontalScrollView(this);placeScroll.setHorizontalScrollBarEnabled(false);LinearLayout choices=row();placeScroll.addView(choices);
         LinearLayout locationLine=row();locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(52),1));content.addView(locationLine,lp(-1,52));gap(content,8);
-        EditText input=captionInput(clip.caption(),"クリップのテキスト",120);content.addView(input,lp(-1,-2));
+        EditText input=captionInput(clip.caption(),"クリップのテキスト",120);input.setTextSize(20);content.addView(input,lp(-1,-2));
         Runnable save=()->{if(!deleted[0])try{repository.caption(clip.id(),edited[0].caption());repository.place(clip.id(),edited[0].place());}catch(RuntimeException e){toast("編集内容を保存できませんでした");}};activeEditorSave=save;
-        Runnable refreshPreview=()->panel.captions.update(edited[0],repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
+        Uri[] savedUri={null};TextView[] saveControl={null};
+        Runnable refreshPreview=()->{savedUri[0]=null;if(saveControl[0]!=null&&saveControl[0].isEnabled())saveControl[0].setText("保存");panel.captions.update(edited[0],repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));};
         ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
             .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
-        TextView saveVideo=button("保存","download",true,()->{});saveVideo.setOnClickListener(v->{save.run();saveClip(edited[0],saveVideo,panel);});
+        TextView saveVideo=button("保存","download",true,()->{});saveControl[0]=saveVideo;saveVideo.setOnClickListener(v->{
+            if(savedUri[0]!=null){try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(savedUri[0],"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("端末の動画アプリから開けます");}return;}
+            save.run();Clip snapshot=edited[0];saveClip(snapshot,saveVideo,panel,uri->{if(snapshot.equals(edited[0])){savedUri[0]=uri;saveVideo.setText("開く");}});
+        });
         java.util.function.Consumer<String> selectPlace=name->{prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
         refreshChoices[0]=()->{
             choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
@@ -491,9 +512,10 @@ public final class MainActivity extends ComponentActivity {
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){edited[0]=edited[0].withCaption(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}
             @Override public void afterTextChanged(Editable s){}
         });
+        gap(content,12);content.addView(button("トリミング","trim",false,()->{save.run();dialog.dismiss();trimEditor.launch(new Intent(this,ClipTrimActivity.class).putExtra("clip_id",clip.id()));}),lp(-1,48));
         gap(content,12);content.addView(saveVideo,lp(-1,48));
         dialog.setOnDismissListener(d->{
-            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.video.stopPlayback();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
+            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.stop();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
             if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();resumeCamera();}}
         });
         dialog.show();dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？")
@@ -501,7 +523,7 @@ public final class MainActivity extends ComponentActivity {
         refreshChoices[0].run();panel.start(clip);
         if(clip.location()!=null)resolvePlaces(clip,names->{if(dialog.isShowing())refreshChoices[0].run();});
     }
-    private void saveClip(Clip clip,TextView control,EditorPreview preview){
+    private void saveClip(Clip clip,TextView control,EditorPreview preview,java.util.function.Consumer<Uri> onSaved){
         if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}
         String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
         String initial=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
@@ -512,14 +534,14 @@ public final class MainActivity extends ComponentActivity {
             if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}
             MovieDraft draft=MovieDraft.create(day,List.of(clip.id()),repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
             draft.fileName=filename;draft.status="rendering";
-            try{draft.save(this);preview.video.stopPlayback();RenderService.activeId=draft.id;androidx.core.content.ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id).putExtra("save_after_render",true));}
+            try{draft.save(this);preview.stop();RenderService.activeId=draft.id;androidx.core.content.ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id).putExtra("save_after_render",true));}
             catch(Exception e){RenderService.activeId=null;android.util.Log.e("Daylog","Could not save clip",e);toast("保存を開始できませんでした");return;}
             dialog.dismiss();control.setEnabled(false);control.setText("保存中");
             main.post(new Runnable(){@Override public void run(){
                 if(isDestroyed())return;
                 try{MovieDraft current=MovieDraft.load(MainActivity.this,draft.id);
                     if("rendering".equals(current.status)||"saving".equals(current.status)){main.postDelayed(this,500);return;}
-                    control.setEnabled(true);control.setText("保存");toast(current.savedUri.isEmpty()?current.error:"保存しました");
+                    control.setEnabled(true);control.setText("保存");if(current.savedUri.isEmpty())toast(current.error);else onSaved.accept(Uri.parse(current.savedUri));
                     if(control.isAttachedToWindow())preview.start(clip);
                 }catch(Exception e){android.util.Log.w("Daylog","Could not read clip save state",e);control.setEnabled(true);control.setText("保存");toast("保存状況を確認できませんでした");}
             }});

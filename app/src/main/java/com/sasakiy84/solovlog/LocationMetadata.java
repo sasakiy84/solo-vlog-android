@@ -28,7 +28,7 @@ final class LocationMetadata {
         try{
             for(Clip clip:clips){
                 if(clip.location()!=null||!clip.place().isBlank()){
-                    JSONObject item=new JSONObject().put("startMs",start).put("durationMs",JournalRules.exportDuration(clip)).put("capturedAt",clip.capturedAt()).put("zone",clip.zoneId());
+                    JSONObject item=new JSONObject().put("startMs",start).put("durationMs",JournalRules.exportDuration(clip)).put("capturedAt",clip.capturedAt()+clip.trimStartMs()).put("zone",clip.zoneId());
                     if(clip.location()!=null){GeoPoint p=clip.location();item.put("latitude",p.latitude()).put("longitude",p.longitude());if(p.accuracyMeters()>0)item.put("accuracyMeters",p.accuracyMeters());}
                     if(!clip.place().isBlank())item.put("place",clip.place());items.put(item);
                 }

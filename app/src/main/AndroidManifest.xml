@@ -28,6 +28,7 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <activity android:name=".ClipTrimActivity" android:exported="false" />
         <activity android:name=".MovieActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".CaptureEditorActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />

@@ -25,6 +25,14 @@ public final class ClipRepository extends SQLiteOpenHelper {
         if (!directory.isDirectory() && !directory.mkdirs()) throw new IllegalStateException("クリップの保存先を作れませんでした");
     }
 
+    @Override public void onOpen(SQLiteDatabase db){
+        super.onOpen(db);
+        db.execSQL("CREATE TABLE IF NOT EXISTS clip_trims (clip_id TEXT PRIMARY KEY, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL)");
+    }
+    public void trim(Clip clip){
+        ContentValues values=new ContentValues();values.put("clip_id",clip.id());values.put("start_ms",clip.trimStartMs());values.put("end_ms",clip.trimEndMs());
+        if(getWritableDatabase().insertWithOnConflict("clip_trims",null,values,SQLiteDatabase.CONFLICT_REPLACE)==-1)throw new IllegalStateException("Could not save trim");
+    }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE clips (id TEXT PRIMARY KEY, captured_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL, seconds INTEGER NOT NULL, landscape INTEGER NOT NULL, included INTEGER NOT NULL, zone_id TEXT NOT NULL, caption TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, accuracy REAL, place TEXT NOT NULL DEFAULT '', location_names TEXT NOT NULL DEFAULT '')");
         createDayCaptions(db);
@@ -56,8 +64,13 @@ public final class ClipRepository extends SQLiteOpenHelper {
     }
     public List<Clip> all() {
         List<Clip> clips = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().query("clips", null, null, null, null, null, "captured_at ASC")) {
-            while (c.moveToNext()) clips.add(new Clip(c.getString(0), c.getLong(1), c.getLong(2), c.getInt(3), c.getInt(4) != 0, c.getInt(5) != 0, c.getString(6), c.getString(7),c.isNull(8)||c.isNull(9)?null:new GeoPoint(c.getDouble(8),c.getDouble(9),c.isNull(10)?0:c.getFloat(10)),c.getString(11)));
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT c.*, t.start_ms, t.end_ms FROM clips c LEFT JOIN clip_trims t ON t.clip_id=c.id ORDER BY c.captured_at ASC",null)) {
+            while(c.moveToNext()){
+                Clip clip=new Clip(c.getString(0),c.getLong(1),c.getLong(2),c.getInt(3),c.getInt(4)!=0,c.getInt(5)!=0,c.getString(6),c.getString(7))
+                    .withLocation(c.isNull(8)||c.isNull(9)?null:new GeoPoint(c.getDouble(8),c.getDouble(9),c.isNull(10)?0:c.getFloat(10))).withPlace(c.getString(11));
+                if(!c.isNull(13))clip=clip.withTrim(c.getLong(13),c.getLong(14));
+                clips.add(clip);
+            }
         }
         return clips;
     }
@@ -112,6 +125,7 @@ public final class ClipRepository extends SQLiteOpenHelper {
     public synchronized void delete(String id) {
         File target = file(id);
         if (target.exists() && !target.delete()) throw new IllegalStateException("動画を削除できませんでした");
+        getWritableDatabase().delete("clip_trims","clip_id=?",new String[]{id});
         getWritableDatabase().delete("clips", "id=?", new String[]{id});
     }
     public long bytes() { return all().stream().mapToLong(c -> file(c.id()).length()).sum(); }
