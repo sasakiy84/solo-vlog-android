@@ -97,7 +97,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
         LinearLayout toolbar=row();toolbar.setPadding(dp(12),0,dp(12),0);
         toolbar.addView(new Ui.Icon(this,"back",Ui.INK,"撮影に戻る",this::finish),size(48,48));
         String time=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));
-        toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,dp(56),1));root.addView(toolbar,size(-1,56));
+        toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new VideoView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
         captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
