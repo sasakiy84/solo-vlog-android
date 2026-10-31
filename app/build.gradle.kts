@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.11").get()
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.12").get()
 require(Regex("(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})").matches(releaseVersion)) {
     "releaseVersion must be MAJOR.MINOR.PATCH without leading zeros"
 }
@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.5.0")
     implementation("androidx.camera:camera-video:1.5.0")
     implementation("androidx.camera:camera-view:1.5.0")
+    implementation("androidx.camera.viewfinder:viewfinder-view:1.5.0")
     implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("androidx.media3:media3-effect:1.8.0")
     implementation("androidx.media3:media3-exoplayer:1.8.0")

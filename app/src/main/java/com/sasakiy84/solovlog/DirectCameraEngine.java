@@ -3,7 +3,6 @@ package com.sasakiy84.solovlog;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.*;
@@ -18,7 +17,13 @@ import android.os.SystemClock;
 import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
-import android.view.TextureView;
+import androidx.camera.viewfinder.view.ViewfinderView;
+import androidx.camera.viewfinder.core.ViewfinderSurfaceRequest;
+import androidx.camera.viewfinder.core.ViewfinderSurfaceSession;
+import androidx.camera.viewfinder.core.TransformationInfo;
+import androidx.camera.viewfinder.core.ImplementationMode;
+import androidx.camera.viewfinder.core.ScaleType;
+import androidx.camera.viewfinder.core.camera2.Camera2TransformationInfo;
 import androidx.camera.core.ZoomState;
 import androidx.core.content.ContextCompat;
 import java.io.File;
@@ -43,13 +48,15 @@ final class DirectCameraEngine {
     private Surface previewSurface;
     private MediaRecorder recorder;
     private File output;
-    private TextureView texture;
+    private ViewfinderView viewfinder;
+    private ViewfinderSurfaceSession previewSession;
+    private com.google.common.util.concurrent.ListenableFuture<ViewfinderSurfaceSession> surfaceFuture;
     private Size videoSize,previewSize;
     private List<Size> sizes=List.of();
     private int sizeIndex,rotation,sessionGeneration,openRetries,recordedFrames;
     private long capturedAt,started,firstSensorTime,lastSensorTime;
     private int seconds;
-    private boolean opening,recording,audio,physicalCrop,maxDurationReached,reportedTransform;
+    private boolean opening,recording,audio,physicalCrop,maxDurationReached;
     private Location location;
     private volatile boolean closed,ready,busy;
     private float scale=1,nativeMin=1,nativeMax=1,zoom=1;
@@ -72,20 +79,15 @@ final class DirectCameraEngine {
     boolean busy(){return busy;}
     boolean frontFacing(){return source!=null&&Integer.valueOf(CameraCharacteristics.LENS_FACING_FRONT).equals(source.get(CameraCharacteristics.LENS_FACING));}
     String quality(){return videoSize==null?null:videoSize.getWidth()+"×"+videoSize.getHeight();}
-    void bind(TextureView view,CameraEngine.Listener listener){
+    void bind(ViewfinderView view,CameraEngine.Listener listener){
         this.listener=listener;
-        if(texture==view&&ready){callback(listener::ready);publishZoom();return;}
-        texture=view;listener.binding();
-        view.setSurfaceTextureListener(new TextureView.SurfaceTextureListener(){
-            public void onSurfaceTextureAvailable(SurfaceTexture surface,int w,int h){worker.post(()->open(surface));}
-            public void onSurfaceTextureSizeChanged(SurfaceTexture surface,int w,int h){transform();}
-            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface){close();return true;}
-            public void onSurfaceTextureUpdated(SurfaceTexture surface){if(!reportedTransform){reportedTransform=true;transform();}}
-        });
-        if(view.isAvailable())worker.post(()->open(view.getSurfaceTexture()));
+        if(viewfinder==view&&ready){transform();callback(listener::ready);publishZoom();return;}
+        viewfinder=view;listener.binding();
+        view.addOnLayoutChangeListener((v,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->transform());
+        worker.post(this::open);
     }
-    private void open(SurfaceTexture surface){
-        if(closed||opening||device!=null||surface==null)return;opening=true;
+    private void open(){
+        if(closed||opening||device!=null)return;opening=true;
         try{
             parent=manager.getCameraCharacteristics(route.cameraId());source=route.physicalId()==null?parent:manager.getCameraCharacteristics(route.physicalId());
             scale=CameraProfiles.scale(manager,route);
@@ -110,21 +112,42 @@ final class DirectCameraEngine {
             Size[] previews=map.getOutputSizes(SurfaceTexture.class);if(previews==null)throw new IllegalStateException("No preview sizes");
             previewSize=Arrays.stream(previews).filter(s->s.getWidth()<=1920&&Math.abs(s.getWidth()/(float)s.getHeight()-16f/9)<.04)
                 .min(Comparator.comparingInt(s->Math.abs(s.getWidth()-1280))).orElseThrow(()->new IllegalStateException("No 16:9 preview"));
-            if(previewSurface!=null)previewSurface.release();surface.setDefaultBufferSize(previewSize.getWidth(),previewSize.getHeight());previewSurface=new Surface(surface);transform();
-            event("open",route.key()+", scale="+scale+", zoom="+nativeMin+".."+nativeMax+", recording="+videoSize+", sensorOrientation="+sensor+", orientationHint="+rotation+", distortionCorrectionModes="+Arrays.toString(source.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)));
+            event("open",route.key()+", scale="+scale+", zoom="+nativeMin+".."+nativeMax+", recording="+videoSize+", preview="+previewSize+", sensorOrientation="+sensor+", orientationHint="+rotation+", distortionCorrectionModes="+Arrays.toString(source.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)));
             worker.removeCallbacks(timeout);worker.postDelayed(timeout,15000);
+            if(previewSession!=null){openCamera();return;}
+            main.post(()->{
+                if(closed)return;
+                transform();viewfinder.setScaleType(ScaleType.FIT_CENTER);
+                surfaceFuture=viewfinder.requestSurfaceSessionAsync(new ViewfinderSurfaceRequest(previewSize.getWidth(),previewSize.getHeight(),ImplementationMode.EMBEDDED));
+                var future=surfaceFuture;
+                future.addListener(()->{
+                    try{
+                        ViewfinderSurfaceSession supplied=future.get();
+                        if(closed){closePreviewSession(supplied);return;}
+                        if(!worker.post(()->{if(closed){closePreviewSession(supplied);return;}previewSession=supplied;previewSurface=supplied.getSurface();openCamera();}))closePreviewSession(supplied);
+                    }catch(java.util.concurrent.CancellationException ignored){/* Closing the camera cancels the request. */}
+                    catch(Exception e){worker.post(()->fail("プレビューを準備できませんでした",e));}
+                },context.getMainExecutor());
+            });
+        }catch(Exception e){cameraOpenFailed(e);}
+    }
+    private void openCamera(){
+        if(closed)return;
+        try{
             manager.openCamera(route.cameraId(),context.getMainExecutor(),new CameraDevice.StateCallback(){
                 public void onOpened(CameraDevice camera){if(closed){camera.close();return;}worker.post(()->{if(closed){camera.close();return;}device=camera;configure(false);});}
                 public void onDisconnected(CameraDevice camera){camera.close();if(!closed)worker.post(()->fail("カメラが切断されました",null));}
                 public void onError(CameraDevice camera,int error){camera.close();if(!closed)worker.post(()->{
-                    if((error==ERROR_CAMERA_IN_USE||error==ERROR_MAX_CAMERAS_IN_USE)&&openRetries++<3){opening=false;event("openRetry","error="+error);worker.postDelayed(()->open(surface),700);}
+                    if((error==ERROR_CAMERA_IN_USE||error==ERROR_MAX_CAMERAS_IN_USE)&&openRetries++<3){opening=false;event("openRetry","error="+error);worker.postDelayed(DirectCameraEngine.this::open,700);}
                     else fail("カメラを開けませんでした（"+error+"）",null);
                 });}
             });
-        }catch(CameraAccessException e){
-            if((e.getReason()==CameraAccessException.CAMERA_IN_USE||e.getReason()==CameraAccessException.MAX_CAMERAS_IN_USE)&&openRetries++<3){opening=false;event("openRetry",e.toString());worker.postDelayed(()->open(surface),700);}
-            else fail("このカメラを開けませんでした",e);
-        }catch(Exception e){fail("このカメラを開けませんでした",e);}
+        }catch(Exception e){cameraOpenFailed(e);}
+    }
+    private void cameraOpenFailed(Exception error){
+        if(error instanceof CameraAccessException e&&(e.getReason()==CameraAccessException.CAMERA_IN_USE||e.getReason()==CameraAccessException.MAX_CAMERAS_IN_USE)&&openRetries++<3){
+            opening=false;event("openRetry",e.toString());worker.postDelayed(this::open,700);
+        }else fail("このカメラを開けませんでした",error);
     }
     private void configure(boolean record){
         if(closed||device==null)return;
@@ -235,32 +258,32 @@ final class DirectCameraEngine {
     private void fail(String message,Exception error){
         if(closed)return;boolean wasBusy=busy;worker.removeCallbacks(arm);worker.removeCallbacks(timeout);worker.removeCallbacks(tick);ready=false;opening=false;busy=false;
         event("error",message+(error==null?"":": "+error));
-        if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();if(previewSurface!=null){previewSurface.release();previewSurface=null;}if(output!=null)output.delete();
+        if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releasePreview();if(output!=null)output.delete();
         callback(()->{listener.binding();listener.error(message);});
-        if(wasBusy)main.post(()->{if(!closed&&texture!=null&&texture.isAvailable()){SurfaceTexture surface=texture.getSurfaceTexture();worker.postDelayed(()->open(surface),500);}});
+        if(wasBusy&&!closed)worker.postDelayed(this::open,500);
     }
     void close(){
         if(closed)return;closed=true;ready=false;
+        main.post(()->{if(surfaceFuture!=null)surfaceFuture.cancel(false);});
         worker.post(()->{worker.removeCallbacksAndMessages(null);boolean pending=busy&&!recording;if(recording)finishRecording(false);busy=false;++sessionGeneration;
-            if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();if(previewSurface!=null){previewSurface.release();previewSurface=null;}
+            if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releasePreview();
             if(pending&&output!=null)output.delete();thread.quitSafely();});
     }
     private void callback(Runnable action){main.post(()->{if(!closed)action.run();});}
     private void event(String stage,String detail){main.post(()->listener.diagnostic(stage,detail));}
-    private void transform(){main.post(()->{
-        if(closed||texture==null||source==null||previewSize==null||texture.getWidth()==0||texture.getHeight()==0)return;
-        int viewW=texture.getWidth(),viewH=texture.getHeight();
-        Integer orientation=source.get(CameraCharacteristics.SENSOR_ORIENTATION);int sensor=orientation==null?90:orientation;
-        int display=texture.getDisplay()==null?0:texture.getDisplay().getRotation()*90;
-        int correction=route.previewCorrection(),angle=Math.floorMod(correction-display,360);
-        // TextureView already applies the sensor rotation and front-camera mirroring.
-        // Undo its stretch, then compensate display rotation and the explicit correction.
-        boolean swap=sensor%180!=0;
-        float baseW=swap?previewSize.getHeight():previewSize.getWidth(),baseH=swap?previewSize.getWidth():previewSize.getHeight();
-        float outputW=angle%180==0?baseW:baseH,outputH=angle%180==0?baseH:baseW;
-        float fit=Math.min(viewW/outputW,viewH/outputH);
-        Matrix matrix=new Matrix();matrix.setScale(baseW*fit/viewW,baseH*fit/viewH,viewW/2f,viewH/2f);matrix.postRotate(angle,viewW/2f,viewH/2f);
-        texture.setTransform(matrix);
-        if(reportedTransform){float[] values=new float[9];matrix.getValues(values);event("previewTransform","sensor="+sensor+", display="+display+", correction="+correction+", view="+viewW+"x"+viewH+", buffer="+previewSize+", matrix="+Arrays.toString(values));}
-    });}
+    private void releasePreview(){
+        previewSurface=null;
+        if(previewSession!=null){ViewfinderSurfaceSession released=previewSession;previewSession=null;main.post(()->closePreviewSession(released));}
+    }
+    private void closePreviewSession(ViewfinderSurfaceSession supplied){
+        try{supplied.close();}catch(Exception e){event("previewReleaseError",e.toString());}
+    }
+    private void transform(){
+        if(closed||viewfinder==null||source==null)return;
+        TransformationInfo camera=Camera2TransformationInfo.createFromCharacteristics(source);
+        int display=viewfinder.getDisplay()==null?0:viewfinder.getDisplay().getRotation()*90;
+        int angle=Math.floorMod(camera.getSourceRotation()-display+route.previewCorrection(),360);
+        viewfinder.setTransformationInfo(new TransformationInfo(angle,camera.isSourceMirroredHorizontally(),camera.isSourceMirroredVertically()));
+        event("previewTransform","renderer=JetpackViewfinder, sensor="+camera.getSourceRotation()+", display="+display+", correction="+route.previewCorrection()+", view="+viewfinder.getWidth()+"x"+viewfinder.getHeight()+", buffer="+previewSize+", scale=FIT_CENTER");
+    }
 }
