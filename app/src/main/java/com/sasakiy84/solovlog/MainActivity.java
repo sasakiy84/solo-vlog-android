@@ -497,7 +497,7 @@ public final class MainActivity extends ComponentActivity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
             .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
         TextView saveVideo=button("動画を調整","edit",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
-        java.util.function.Consumer<String> selectPlace=name->{edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
+        java.util.function.Consumer<String> selectPlace=name->{prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
         refreshChoices[0]=()->{
             choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
             if(!edited[0].place().isBlank())names.add(edited[0].place());names.addAll(repository.nearbyPlaces(edited[0].location()));names.addAll(repository.placeCandidates(clip.id()));
@@ -525,7 +525,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout form=column();padded(form,20);EditText input=captionInput(edited[0].place(),"場所",80);input.setHint(null);form.addView(input,lp(-1,-2));
         input.addTextChangedListener(new TextWatcher(){
             @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
-            @Override public void onTextChanged(CharSequence s,int start,int before,int count){edited[0]=edited[0].withPlace(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count){prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}
             @Override public void afterTextChanged(Editable s){}
         });
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("場所").setView(form).setPositiveButton("閉じる",null).create();

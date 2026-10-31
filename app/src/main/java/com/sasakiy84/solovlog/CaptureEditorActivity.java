@@ -137,7 +137,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private void selectDefaultCity(java.util.List<String> names){
         if(deleted||!prefs.getBoolean("location",true)||!locations.granted()||!clip.place().isBlank()||prefs.getBoolean("placeChoice_"+clip.id(),false))return;
         String city=PlaceResolver.defaultCity(names);if(city.isEmpty())return;
-        clip=clip.withPlace(city);markPlaceChoice();saveEdits();
+        clip=clip.withPlace(city);markPlaceChoice();repository.place(clip.id(),city);
         if(!isDestroyed()){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true));refreshPlaces();}
     }
     private void resolvePlaces(){
