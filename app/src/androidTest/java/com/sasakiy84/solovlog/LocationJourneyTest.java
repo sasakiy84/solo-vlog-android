@@ -156,6 +156,10 @@ public final class LocationJourneyTest {
                 for(int n=0;n<2;n++){Bitmap frame=metadata.getFrameAtTime(n==0?1000000:5800000,MediaMetadataRetriever.OPTION_CLOSEST);assertThat(frame).isNotNull();DeviceImages.bitmap(context,frame,"12-location-export-"+(n+1));frame.recycle();}
             }
             DeviceImages.screenshot(context,device,"13-travel-saved");
+            click(By.res("android","button2"));click(By.desc("前の画面に戻る"));
+            int countBefore=repository.all().size();Clip removed=record(2);click(By.text("削除"));click(By.res("android","button1"));
+            await(()->repository.all().size()==countBefore);assertThat(repository.file(removed.id()).exists()).isFalse();
+            find(By.text(Pattern.compile("\\d{2}\\.\\d{2}.*3本")));
         }finally{
             manager.removeTestProvider(LocationManager.GPS_PROVIDER);device.executeShellCommand("appops set com.sasakiy84.solovlog android:mock_location default");
         }

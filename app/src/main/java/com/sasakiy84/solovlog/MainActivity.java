@@ -131,7 +131,7 @@ public final class MainActivity extends ComponentActivity {
     @Override protected void onResume(){super.onResume();foreground=true;
         if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
-        if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();resumeCamera();}
+        if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();if(cameraCount!=null)cameraCount.setText(cameraSummary());updateLocationIcon();resumeCamera();}
     }
     @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
