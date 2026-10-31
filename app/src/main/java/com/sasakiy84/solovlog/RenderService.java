@@ -53,7 +53,7 @@ public final class RenderService extends Service {
             draft.status="rendering";draft.error="";draft.save(this);
             exporter=new VideoExporter(this);
             ClipRepository repository=ClipRepository.get(this);
-            exporter.render(draft.clips(repository),repository,draft.caption,draft.showTime,draft.showDate,draft.audio,
+            exporter.render(draft,repository,
                 new VideoExporter.RenderListener(){
                     @Override public void rendered(File output){completeRender(output);}
                     @Override public void error(String message){fail(message);}

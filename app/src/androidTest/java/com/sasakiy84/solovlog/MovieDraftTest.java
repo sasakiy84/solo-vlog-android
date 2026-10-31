@@ -13,7 +13,7 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class MovieDraftTest {
     @Test public void adjustmentsAndReadyResultPersistWithoutPublishingToGallery()throws Exception{
-        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();MovieDraft draft=MovieDraft.create("2026-10-31",List.of(UUID.randomUUID().toString(),UUID.randomUUID().toString()),"旅行",false,false);
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();MovieDraft draft=MovieDraft.create(context,"2026-10-31",List.of(UUID.randomUUID().toString(),UUID.randomUUID().toString()),"旅行",false,false);
         try{
             draft.showPlace=false;draft.showText=false;draft.audio=false;draft.status="ready";draft.sourceSignature="source";draft.save(context);
             MovieDraft restored=MovieDraft.load(context,draft.id);assertThat(restored.clipIds).containsExactlyElementsIn(draft.clipIds).inOrder();assertThat(restored.caption).isEqualTo("旅行");assertThat(restored.showTime||restored.showPlace||restored.showText||restored.audio).isFalse();assertThat(restored.status).isEqualTo("ready");assertThat(restored.savedUri).isEmpty();assertThat(restored.sourceSignature).isEqualTo("source");

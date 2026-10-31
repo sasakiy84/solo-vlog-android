@@ -160,7 +160,7 @@ public final class LocationJourneyTest {
             List<Clip> trip=List.of(clip(first.id()),clip(second.id()),clip(third.id()));
             try(InputStream input=context.getContentResolver().openInputStream(daily)){
                 assertThat(input).isNotNull();String container=new String(input.readAllBytes(),StandardCharsets.UTF_8);
-                assertThat(container).contains(LocationMetadata.KEY);assertThat(container).contains(LocationMetadata.timeline(trip));
+                assertThat(container).contains(LocationMetadata.KEY);assertThat(container).contains(LocationMetadata.timeline(trip,"",true));
             }
             try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){
                 metadata.setDataSource(context,daily);assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)).isNull();

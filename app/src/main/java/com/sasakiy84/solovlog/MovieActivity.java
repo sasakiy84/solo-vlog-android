@@ -60,8 +60,8 @@ public final class MovieActivity extends ComponentActivity {
             if(id!=null)draft=MovieDraft.load(this,id);
             else{
                 List<String> ids=getIntent().getStringArrayListExtra("clips");if(ids==null||ids.isEmpty())throw new IllegalArgumentException("No clips");
-                var prefs=getSharedPreferences("daylog",0);MovieDraft created=MovieDraft.create(getIntent().getStringExtra("day"),ids,getIntent().getStringExtra("caption"),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
-                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime,created.showDate);
+                var prefs=getSharedPreferences("daylog",0);MovieDraft created=MovieDraft.create(this,getIntent().getStringExtra("day"),ids,getIntent().getStringExtra("caption"),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
+                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime,created.showDate)+":"+created.compact+":"+created.embedLocation;
                 String cachedId=prefs.getString("movieDraft:"+created.sourceSignature,null);draft=created;
                 if(cachedId!=null)try{draft=MovieDraft.load(this,cachedId);}catch(Exception e){android.util.Log.w("DaylogMovie","Cached draft unavailable",e);}
                 draft.save(this);prefs.edit().putString("movieDraft:"+created.sourceSignature,draft.id).apply();
@@ -103,6 +103,8 @@ public final class MovieActivity extends ComponentActivity {
             @Override public void afterTextChanged(Editable s){}
         });
         toggle("年月日を表示",draft.showDate,value->{draft.showDate=value;changed();});toggle("撮影時刻を表示",draft.showTime,value->{draft.showTime=value;changed();});toggle("クリップのテキストを表示",draft.showText,value->{draft.showText=value;changed();});toggle("場所を表示",draft.showPlace,value->{draft.showPlace=value;changed();});toggle("音声を含める",draft.audio,value->{draft.audio=value;changed();});
+        toggle("容量優先 · 1080p",draft.compact,value->{draft.compact=value;changed();});
+        toggle("位置情報を埋め込む",draft.embedLocation,value->{draft.embedLocation=value;changed();});
         LinearLayout actions=column();actions.setPadding(dp(20),dp(8),dp(20),dp(12));render=button("レンダリング",true,this::startRender);actions.addView(render,size(-1,56));save=button("保存",true,()->{if(draft.savedUri.isEmpty())saveToPhone();else openSavedMovie();});LinearLayout.LayoutParams params=size(-1,56);params.topMargin=dp(12);actions.addView(save,params);root.addView(actions,size(-1,-2));
         root.setFocusableInTouchMode(true);root.requestFocus();updateUi();
     }

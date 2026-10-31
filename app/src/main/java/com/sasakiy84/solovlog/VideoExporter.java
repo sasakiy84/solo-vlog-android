@@ -19,6 +19,8 @@ import androidx.media3.effect.Presentation;
 import androidx.media3.transformer.DefaultAssetLoaderFactory;
 import androidx.media3.transformer.DefaultDecoderFactory;
 import androidx.media3.transformer.DefaultEncoderFactory;
+import androidx.media3.transformer.VideoEncoderSettings;
+import androidx.media3.transformer.AudioEncoderSettings;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
@@ -52,7 +54,9 @@ public final class VideoExporter {
     static boolean isSaving(File file){return SAVING.contains(file.getAbsolutePath());}
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
 
-    public void render(List<Clip> clips,ClipRepository repository,String dayCaption,boolean showTime,boolean showDate,boolean includeAudio,RenderListener listener){
+    public void render(MovieDraft draft,ClipRepository repository,RenderListener listener){
+        List<Clip> clips=draft.clips(repository),metadataClips=draft.sourceClips(repository);
+        String dayCaption=draft.caption;boolean showTime=draft.showTime,showDate=draft.showDate,includeAudio=draft.audio;
         if(clips.isEmpty()){listener.error("保存するクリップを選んでください。");return;}
         if(transformer!=null||preparing){listener.error("現在の処理が終わるまでお待ちください。");return;}
         preparing=true;int generation=++renderGeneration;
@@ -63,34 +67,50 @@ public final class VideoExporter {
                 for(Clip clip:clips){
                     if(generation!=renderGeneration)return;
                     File source=repository.file(clip.id());if(!source.isFile())throw new java.io.FileNotFoundException("Missing source clip");
+                    int width,height;
                     try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
-                        media.setDataSource(source.getAbsolutePath());int width=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));int height=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));highResolution|=Math.max(width,height)>1920;
+                        media.setDataSource(source.getAbsolutePath());width=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));height=Integer.parseInt(media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));highResolution|=Math.max(width,height)>1920;
                     }
                     MediaItem item=new MediaItem.Builder().setUri(Uri.fromFile(source))
                         .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build();
                     EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio||!clip.renderAudio());
-                    if(!dayCaption.isBlank()||showTime||showDate||!clip.caption().isBlank()||!clip.place().isBlank())
-                        edited.setEffects(new Effects(List.of(),List.of(CaptionOverlay.prepare(context,source,clip,dayCaption,showTime,showDate))));
+                    List<Effect> effects=new ArrayList<>();
+                    if(draft.compact){
+                        // Never enlarge 720p originals just to produce a nominal 1080p file.
+                        if(Math.max(width,height)>1920)effects.add(Presentation.createForWidthAndHeight(clip.landscape()?1920:1080,clip.landscape()?1080:1920,Presentation.LAYOUT_SCALE_TO_FIT));
+                        edited.setFrameRate(30);
+                    }
+                    if(!dayCaption.isBlank()||showTime||showDate||!clip.caption().isBlank()||!clip.place().isBlank())effects.add(CaptionOverlay.prepare(context,source,clip,dayCaption,showTime,showDate));
+                    // Explicit encoder bitrate settings force encoding even without visible effects.
+                    edited.setEffects(new Effects(List.of(),effects));
                     items.add(edited.build());
                 }
-                boolean large=highResolution;main.post(()->{if(generation!=renderGeneration)return;preparing=false;startRender(items,clips,large,false,listener);});
+                boolean large=highResolution;main.post(()->{if(generation!=renderGeneration)return;preparing=false;startRender(items,metadataClips,draft,large,draft.compact, draft.compact&&hasHevcEncoder(),listener);});
             }catch(Exception e){Log.e("DaylogExport","Could not prepare clips",e);main.post(()->{if(generation!=renderGeneration)return;preparing=false;listener.error("元の動画を読み込めませんでした。元動画は残っています。");});}
         });
     }
-    private void startRender(List<EditedMediaItem> items,List<Clip> clips,boolean highResolution,boolean reducedResolution,RenderListener listener){
+    private static boolean hasHevcEncoder(){
+        try{for(var codec:new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos())if(codec.isEncoder())for(String type:codec.getSupportedTypes())if(type.equalsIgnoreCase(MimeTypes.VIDEO_H265))return true;}
+        catch(RuntimeException e){Log.w("DaylogExport","HEVC capabilities unavailable",e);}
+        return false;
+    }
+    private void startRender(List<EditedMediaItem> items,List<Clip> clips,MovieDraft draft,boolean highResolution,boolean reducedResolution,boolean hevc,RenderListener listener){
         EditedMediaItemSequence sequence = new EditedMediaItemSequence.Builder(items).experimentalSetForceAudioTrack(true).build();
         Composition composition = new Composition.Builder(sequence).build();
         File output;
         try { output = File.createTempFile("daylog-export-", ".mp4", context.getCacheDir()); output.delete(); }
         catch (Exception e) { listener.error("書き出し用の空き容量を確保できませんでした。"); return; }
         currentOutput=output;
-        transformer = new Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
-            .setEncoderFactory(new DefaultEncoderFactory.Builder(context).setEnableFallback(true).build())
+        DefaultEncoderFactory.Builder encoder=new DefaultEncoderFactory.Builder(context).setEnableFallback(true);
+        if(draft.compact)encoder.setRequestedVideoEncoderSettings(new VideoEncoderSettings.Builder().setBitrate(hevc?4_000_000:6_000_000).setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR).build())
+            .setRequestedAudioEncoderSettings(new AudioEncoderSettings.Builder().setBitrate(96_000).build());
+        transformer = new Transformer.Builder(context).setVideoMimeType(hevc?MimeTypes.VIDEO_H265:MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setEncoderFactory(encoder.build())
             .setAssetLoaderFactory(new DefaultAssetLoaderFactory(
                 context,new DefaultDecoderFactory.Builder(context).setEnableDecoderFallback(true).build(),
                 Clock.DEFAULT,LogSessionId.LOG_SESSION_ID_NONE))
             .setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build())
-            .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips)))
+            .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips,draft.caption,draft.embedLocation)))
             .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(Composition result, ExportResult exportResult) {
                     transformer = null;
@@ -110,6 +130,7 @@ public final class VideoExporter {
                              ExportException.ERROR_CODE_MUXING_TIMEOUT -> true;
                         default -> false;
                     };
+                    if(hevc&&videoFailure){int generation=renderGeneration;main.post(()->{if(generation==renderGeneration)startRender(items,clips,draft,highResolution,reducedResolution,false,listener);});return;}
                     if(highResolution&&!reducedResolution&&videoFailure){
                         List<EditedMediaItem> resized=new ArrayList<>();
                         for(int i=0;i<items.size();i++){
@@ -117,7 +138,7 @@ public final class VideoExporter {
                             effects.add(Presentation.createForWidthAndHeight(wide?1920:1080,wide?1080:1920,Presentation.LAYOUT_SCALE_TO_FIT));effects.addAll(item.effects.videoEffects);
                             resized.add(item.buildUpon().setEffects(new Effects(item.effects.audioProcessors,effects)).build());
                         }
-                        int generation=renderGeneration;main.post(()->{if(generation==renderGeneration)startRender(resized,clips,true,true,listener);});return;
+                        int generation=renderGeneration;main.post(()->{if(generation==renderGeneration)startRender(resized,clips,draft,true,true,false,listener);});return;
                     }
                     listener.error("動画をまとめられませんでした。元のクリップは残っています。");
                 }

@@ -131,7 +131,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
         engine=new CameraEngine(this,this);CameraEngine currentEngine=engine;
         main.postDelayed(timeout,45000);update();
         currentEngine.bind(preview,getSharedPreferences("daylog",0).getBoolean("landscape",false),new CameraEngine.Listener(){
-            public void ready(){if(!valid(token)||finished)return;ready=true;zoom.setAvailable(true);put(current,"preview","ready");persist();status.setText(routes.get(index)!=null&&routes.get(index).recordOnly()?"互換モード：録画中はプレビュー停止":"最広角を表示中");update();if(automaticRecording&&!recording)recordNow();else if(!automaticRecording)main.removeCallbacks(timeout);}
+            public void ready(){if(!valid(token)||finished)return;ready=true;zoom.setAvailable(true);put(current,"preview","ready");persist();status.setText(routes.get(index)!=null&&routes.get(index).recordOnly()?"互換モード：録画中はプレビュー停止":"プレビュー表示中");update();if(automaticRecording&&!recording)recordNow();else if(!automaticRecording)main.removeCallbacks(timeout);}
             public void binding(){if(valid(token)){ready=false;zoom.setAvailable(false);update();}}
             public void zoomChanged(ZoomState state){if(valid(token))zoom.update(state);}
             public void zoomError(String message){if(valid(token))status.setText(message);}

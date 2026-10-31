@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/** Only public camera IDs and physical IDs advertised by their logical parent are inspected. */
+/** Prefer advertised cameras, with a bounded fallback for unlisted rear lenses. */
 final class CameraProfiles {
     record Route(String cameraId,String physicalId,boolean cameraX,boolean recordOnly,int previewCorrection,int videoCorrection,int lensCorrection) {
         Route{if(lensCorrection< -1||lensCorrection>2)throw new IllegalArgumentException("Invalid lens correction");if(previewCorrection%90!=0||videoCorrection%90!=0)throw new IllegalArgumentException("Invalid camera rotation");previewCorrection=Math.floorMod(previewCorrection,360);videoCorrection=Math.floorMod(videoCorrection,360);if(cameraId==null||cameraId.isBlank())throw new IllegalArgumentException("Missing camera ID");if(cameraX)recordOnly=false;}
@@ -19,10 +19,63 @@ final class CameraProfiles {
         Route(String cameraId,String physicalId,boolean cameraX,boolean recordOnly){this(cameraId,physicalId,cameraX,recordOnly,0,0,-1);}
         Route withCorrection(int preview,int video,int lens){return new Route(cameraId,physicalId,cameraX,recordOnly,preview,video,lens);}
         String key(){return (cameraX?"camerax:":"camera2:")+cameraId+(physicalId==null?"":"/"+physicalId)+(recordOnly?":single":"");}
-        String label(){return (cameraX?"CameraX ":"Camera2 ")+cameraId+(physicalId==null?"":" / "+physicalId)+(recordOnly?" · 互換":"");}
+        String label(){return "ID "+cameraId+(physicalId==null?"":" / "+physicalId)+" · "+(cameraX?"CameraX":"Camera2")+(recordOnly?" · 互換":"");}
         JSONObject json() throws Exception{return new JSONObject().put("cameraId",cameraId).put("physicalId",physicalId==null?JSONObject.NULL:physicalId).put("cameraX",cameraX).put("recordOnly",recordOnly).put("previewCorrection",previewCorrection).put("videoCorrection",videoCorrection).put("lensCorrection",lensCorrection);}
     }
     record Scan(List<Route> routes,JSONObject report) {}
+    record RearPair(Route standard,Route wide,float minimum,float maximum) {
+        Route forRatio(float ratio){return ratio<1?wide:standard;}
+    }
+    /** Public lenses stay on CameraX; unlisted numeric IDs are a bounded metadata-only fallback. */
+    static RearPair rearPair(Context context,Route selected){
+        if(selected!=null&&(selected.cameraX()||selected.physicalId()!=null))return null;
+        CameraManager manager=context.getSystemService(CameraManager.class);
+        try{
+            List<String> publicIds=List.of(manager.getCameraIdList());
+            for(String referenceId:publicIds){
+                CameraCharacteristics reference=manager.getCameraCharacteristics(referenceId);
+                if(!Integer.valueOf(CameraCharacteristics.LENS_FACING_BACK).equals(reference.get(CameraCharacteristics.LENS_FACING)))continue;
+                var range=reference.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+                if(range==null||range.getLower()!=1f||focal(reference)<=0)return null;
+                Route standard=selected!=null&&selected.cameraId().equals(referenceId)?selected:new Route(referenceId,null);
+                if(selected!=null){
+                    CameraCharacteristics info=manager.getCameraCharacteristics(selected.cameraId());float ratio=focal(info)/focal(reference);
+                    if(isWideVideoCamera(info,ratio))return pair(standard,selected,info,ratio,range.getUpper());
+                    if(!selected.cameraId().equals(referenceId))return null;
+                }
+                // CameraX already supports advertised logical/physical rear lenses.
+                java.util.Set<String> advertised=new java.util.LinkedHashSet<>(publicIds);advertised.addAll(reference.getPhysicalCameraIds());
+                for(String id:advertised){
+                    CameraCharacteristics info=manager.getCameraCharacteristics(id);
+                    float ratio=focal(info)/focal(reference);
+                    if(isWideVideoCamera(info,ratio))return selected==null?null:pair(standard,new Route(publicIds.contains(id)?id:referenceId,publicIds.contains(id)?null:id),info,ratio,range.getUpper());
+                }
+                Route widest=null;CameraCharacteristics widestInfo=null;float smallest=.85f;
+                // Camera IDs are opaque; this probes common numeric aliases without opening devices.
+                // Unknown string IDs cannot be guessed and remain available through manual selection.
+                for(int number=0;number<20;number++){
+                    String id=Integer.toString(number);if(advertised.contains(id))continue;
+                    try{
+                        CameraCharacteristics info=manager.getCameraCharacteristics(id);float ratio=focal(info)/focal(reference);
+                        if(isWideVideoCamera(info,ratio)&&ratio<smallest){widest=new Route(id,null);widestInfo=info;smallest=ratio;}
+                    }catch(android.hardware.camera2.CameraAccessException|IllegalArgumentException|SecurityException unavailable){android.util.Log.d("DaylogCamera","Unlisted camera unavailable: "+id);}
+                }
+                return widest==null?null:pair(standard,widest,widestInfo,smallest,range.getUpper());
+            }
+        }catch(Exception e){android.util.Log.w("DaylogCamera","Wide camera discovery unavailable",e);}
+        return null;
+    }
+    private static boolean isWideVideoCamera(CameraCharacteristics info,float ratio){
+        if(!Float.isFinite(ratio)||ratio<=0||ratio>=.85f||!Integer.valueOf(CameraCharacteristics.LENS_FACING_BACK).equals(info.get(CameraCharacteristics.LENS_FACING)))return false;
+        var map=info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);if(map==null)return false;
+        var video=map.getOutputSizes(android.media.MediaRecorder.class);var preview=map.getOutputSizes(android.graphics.SurfaceTexture.class);
+        return video!=null&&preview!=null&&Arrays.stream(video).anyMatch(s->s.getWidth()>=640&&Math.abs(s.getWidth()/(float)s.getHeight()-16f/9)<.04)
+            &&Arrays.stream(preview).anyMatch(s->s.getWidth()<=1920&&Math.abs(s.getWidth()/(float)s.getHeight()-16f/9)<.04);
+    }
+    private static RearPair pair(Route standard,Route wide,CameraCharacteristics info,float ratio,float maximum){
+        var range=info.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+        return new RearPair(standard,wide,ratio*(range==null?1:range.getLower()),maximum);
+    }
     static Route selected(Context context){
         String raw=context.getSharedPreferences("daylog",0).getString("cameraRoute","");
         if(raw.isEmpty())return null;
@@ -34,7 +87,9 @@ final class CameraProfiles {
     }
     static Scan scan(Context context) throws Exception{
         CameraManager manager=context.getSystemService(CameraManager.class);List<Route> routes=new ArrayList<>();JSONArray cameras=new JSONArray();
-        for(String id:manager.getCameraIdList()){
+        java.util.Set<String> ids=new java.util.LinkedHashSet<>(List.of(manager.getCameraIdList()));
+        RearPair pair=rearPair(context,selected(context));if(pair!=null)ids.add(pair.wide().cameraId());
+        for(String id:ids){
             JSONObject camera=new JSONObject().put("id",id);
             try{
                 CameraCharacteristics info=manager.getCameraCharacteristics(id);camera.put("characteristics",describe(info));
@@ -88,6 +143,8 @@ final class CameraProfiles {
     }
     private static float focal(CameraCharacteristics info){
         SizeF sensor=info.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);float[] values=info.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
-        return sensor!=null&&sensor.getWidth()>0&&values!=null&&values.length>0?values[0]/sensor.getWidth():0;
+        if(sensor==null||sensor.getWidth()<=0||values==null)return 0;
+        float shortest=Float.POSITIVE_INFINITY;for(float value:values)if(Float.isFinite(value)&&value>0)shortest=Math.min(shortest,value);
+        return Float.isFinite(shortest)?shortest/sensor.getWidth():0;
     }
 }

@@ -66,6 +66,12 @@ public final class CameraEngine {
     private PreviewView preview;
     private CameraPreview stage;
     private DirectCameraEngine direct;
+    private CameraProfiles.RearPair rearPair;
+    private Listener directListener;
+    private boolean wideUnavailable;
+    private CameraProfiles.Route fallbackRoute;
+    private boolean rearPairResolved;
+    private int discoveryGeneration;
     private Recording recording;
     private boolean busy,front,horizontal,bound,selectedSuspended;
     private long started,capturedAt;
@@ -77,14 +83,53 @@ public final class CameraEngine {
     }
     public void bind(CameraPreview target,boolean landscape,Listener listener){
         stage=target;bindingListener=listener;
-        if(target.route!=null&&!target.route.cameraX()&&!selectedSuspended){
+        if(!target.widestOnOpen&&!selectedSuspended&&!wideUnavailable){
+            if(!rearPairResolved){
+                int generation=++discoveryGeneration;listener.binding();
+                java.util.concurrent.CompletableFuture.supplyAsync(()->CameraProfiles.rearPair(context,target.route)).thenAccept(pair->handler.post(()->{
+                    if(generation!=discoveryGeneration||stage!=target)return;
+                    rearPair=pair;rearPairResolved=true;
+                    if(owner.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))bind(target,landscape,listener);
+                }));return;
+            }
+            if(rearPair!=null){bindRearPair(target,landscape,listener);return;}
+        }
+        CameraProfiles.Route nativeRoute=wideUnavailable&&fallbackRoute!=null?fallbackRoute:target.route;
+        if(nativeRoute!=null&&!nativeRoute.cameraX()&&!selectedSuspended){
             horizontal=landscape;
             preview=null;bound=false;releaseUseCases();
-            if(direct==null||!direct.matches(target.route,landscape)){if(direct!=null)direct.close();direct=new DirectCameraEngine(context,target.route,landscape,listener);}
+            if(direct==null||!direct.matches(nativeRoute,landscape)){if(direct!=null)direct.close();direct=new DirectCameraEngine(context,nativeRoute,landscape,listener);}
             direct.bind(target.direct(),listener);return;
         }
         if(direct!=null){direct.close();direct=null;}
         bindCameraX(target.cameraX(),landscape,listener);
+    }
+    private void bindRearPair(CameraPreview target,boolean landscape,Listener listener){
+        horizontal=landscape;preview=null;bound=false;releaseUseCases();
+        CameraProfiles.Route route=rearPair.forRatio(requestedZoom);
+        if(direct!=null&&!direct.matches(route,landscape)){direct.close();direct=null;}
+        Listener forwarding=new Listener(){
+            private boolean opened;
+            public void ready(){opened=true;direct.setZoom(requestedZoom);listener.ready();}
+            public void binding(){listener.binding();}
+            public void diagnostic(String step,String detail){listener.diagnostic(step,detail);}
+            public void zoomChanged(ZoomState state){
+                float min=direct.busy()?state.getMinZoomRatio():rearPair.minimum(),max=direct.busy()?state.getMaxZoomRatio():rearPair.maximum(),value=state.getZoomRatio();
+                listener.zoomChanged(new ZoomState(){public float getZoomRatio(){return value;}public float getMinZoomRatio(){return min;}public float getMaxZoomRatio(){return max;}public float getLinearZoom(){return max>min?(value-min)/(max-min):0;}});
+            }
+            public void zoomError(String message){listener.zoomError(message);}
+            public void progress(float fraction,boolean stabilizing){listener.progress(fraction,stabilizing);}
+            public void saved(File file,long at){listener.saved(file,at);}
+            public void error(String message){
+                if(!opened&&route.equals(rearPair.wide())&&!direct.busy()){
+                    direct.close();direct=null;fallbackRoute=rearPair.standard();rearPair=null;wideUnavailable=true;requestedZoom=1;
+                    bind(target,landscape,listener);listener.zoomError("広角カメラを使えないため標準カメラに戻しました");
+                }else listener.error(message);
+            }
+        };
+        directListener=forwarding;
+        if(direct==null)direct=new DirectCameraEngine(context,route,landscape,forwarding);
+        direct.bind(target.direct(),forwarding);
     }
     private void bindCameraX(PreviewView target,boolean landscape,Listener listener){
         if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
@@ -142,7 +187,7 @@ public final class CameraEngine {
             }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.diagnostic("cameraXError",e.toString());listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
-    public void unbind(){stage=null;if(direct!=null){direct.close();direct=null;}preview=null;bound=false;releaseUseCases();}
+    public void unbind(){discoveryGeneration++;stage=null;if(direct!=null){direct.close();direct=null;}preview=null;bound=false;releaseUseCases();}
     private void releaseUseCases(){
         zoomRequest++;
         if(boundCamera!=null&&zoomObserver!=null)boundCamera.getCameraInfo().getZoomState().removeObserver(zoomObserver);
@@ -151,7 +196,7 @@ public final class CameraEngine {
         if(provider!=null&&boundPreview!=null&&boundVideo!=null)provider.unbind(boundPreview,boundVideo);
         boundPreview=null;boundVideo=null;
     }
-    public void resetSelection(){selectedSuspended=false;front=false;lenses=null;requestedZoom=1;}
+    public void resetSelection(){discoveryGeneration++;rearPairResolved=false;selectedSuspended=false;front=false;lenses=null;rearPair=null;wideUnavailable=false;fallbackRoute=null;requestedZoom=1;}
     public void flip(){
         if(direct==null&&stage!=null&&stage.route!=null&&stage.route.cameraX()&&!selectedSuspended){selectedSuspended=true;front=boundCamera!=null&&boundCamera.getCameraInfo().getLensFacing()!=CameraSelector.LENS_FACING_FRONT;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);return;}
         if(direct==null&&selectedSuspended&&stage!=null&&stage.route!=null){selectedSuspended=false;front=false;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);return;}
@@ -163,7 +208,14 @@ public final class CameraEngine {
         front=!front;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);
     }
     public void setZoom(float ratio){
-        if(direct!=null){direct.setZoom(ratio);return;}
+        if(direct!=null){
+            if(!Float.isFinite(ratio))return;
+            if(rearPair!=null&&!selectedSuspended&&!direct.busy()){
+                requestedZoom=Math.max(rearPair.minimum(),Math.min(rearPair.maximum(),ratio));
+                if(!direct.matches(rearPair.forRatio(requestedZoom),horizontal)){bindRearPair(stage,horizontal,bindingListener);return;}
+            }
+            direct.setZoom(ratio);return;
+        }
         Camera camera=boundCamera;if(camera==null||!bound||!Float.isFinite(ratio))return;
         if(!busy&&lenses.forRatio(ratio)!=activeLens){requestedZoom=ratio;bound=false;bind(stage,horizontal,bindingListener);return;}
         ZoomState state=camera.getCameraInfo().getZoomState().getValue();if(state==null)return;
@@ -192,7 +244,7 @@ public final class CameraEngine {
     public String actualQuality(){if(direct!=null)return direct.quality();return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
     public boolean busy(){return direct!=null?direct.busy():busy;}
     public void start(File target,int seconds,boolean audio,Location location,Listener listener){
-        if(direct!=null){direct.start(target,seconds,audio,location,listener);return;}
+        if(direct!=null){direct.start(target,seconds,audio,location,rearPair!=null&&!selectedSuspended?directListener:listener);return;}
         if(busy||!bound)return;busy=true;publishZoom();listener.progress(0,true);
         // Avoid including the physical tap in the saved clip.
         arm=()->{

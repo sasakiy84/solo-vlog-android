@@ -543,7 +543,7 @@ public final class MainActivity extends ComponentActivity {
         dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String filename;try{filename=VideoExporter.fileName(name.getText().toString());}catch(IllegalArgumentException e){name.setError("保存名を確認してください");return;}
             if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}
-            MovieDraft draft=MovieDraft.create(day,List.of(clip.id()),repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
+            MovieDraft draft=MovieDraft.create(this,day,List.of(clip.id()),repository.dayCaption(day),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
             draft.fileName=filename;draft.status="rendering";
             try{draft.save(this);preview.stop();RenderService.activeId=draft.id;androidx.core.content.ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id).putExtra("save_after_render",true));}
             catch(Exception e){RenderService.activeId=null;android.util.Log.e("Daylog","Could not save clip",e);toast("保存を開始できませんでした");return;}
@@ -579,9 +579,6 @@ public final class MainActivity extends ComponentActivity {
     private void renderSettingsBody(){
         root.removeAllViews();toolbar("設定",()->navigate(settingsReturn),false);
         LinearLayout content=scrollBody();
-        CameraProfiles.Route route=CameraProfiles.selected(this);
-        LinearLayout cameraSettings=preferenceRow("カメラ診断・選択",route==null?"自動":"手動");
-        cameraSettings.setOnClickListener(v->{camera.unbind();camera.resetSelection();startActivity(new Intent(this,CameraDiagnosticsActivity.class));});content.addView(cameraSettings);gap(content,1);
         boolean leftHanded=prefs.getBoolean("leftHanded",false);LinearLayout handedness=preferenceRow("利き手",leftHanded?"左利き":"右利き");
         handedness.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("利き手").setSingleChoiceItems(new String[]{"右利き","左利き"},leftHanded?1:0,(dialog,which)->{prefs.edit().putBoolean("leftHanded",which==1).apply();dialog.dismiss();renderSettingsBody();}).setNegativeButton("キャンセル",null).show());content.addView(handedness);gap(content,1);
         LinearLayout format=preferenceRow("動画の向き",prefs.getBoolean("landscape",false)?"横":"縦");
@@ -601,6 +598,9 @@ public final class MainActivity extends ComponentActivity {
         resolution.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("撮影画質").setSingleChoiceItems(qualityNames,qualityIndex,(dialog,which)->{
             prefs.edit().putString("captureQuality",qualityValues[which]).apply();dialog.dismiss();renderSettingsBody();
         }).setNegativeButton("キャンセル",null).show());content.addView(resolution);gap(content,1);
+
+        content.addView(settingToggle("容量優先（最大1080p）",prefs.getBoolean("compactExport",false),()->{prefs.edit().putBoolean("compactExport",!prefs.getBoolean("compactExport",false)).apply();renderSettingsBody();}));gap(content,1);
+        content.addView(settingToggle("書き出しに位置情報を含める",prefs.getBoolean("embedLocation",true),()->{prefs.edit().putBoolean("embedLocation",!prefs.getBoolean("embedLocation",true)).apply();renderSettingsBody();}));gap(content,1);
 
         String time=String.format(Locale.JAPAN,"%02d:%02d",boundary()/60,boundary()%60);
         LinearLayout day=preferenceRow("1日の切り替え時刻",time);day.setContentDescription("1日の切り替え時刻 "+time);
@@ -623,6 +623,11 @@ public final class MainActivity extends ComponentActivity {
         gap(content,24);
         try{String version=getPackageManager().getPackageInfo(getPackageName(),0).versionName;LinearLayout versionRow=row();versionRow.setPadding(dp(4),dp(12),dp(4),dp(12));TextView label=text("バージョン",16,Ui.INK);label.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(label,new LinearLayout.LayoutParams(0,dp(40),1));TextView value=text(version==null?"—":version,15,Ui.MUTED);value.setGravity(Gravity.CENTER_VERTICAL);versionRow.addView(value,lp(-2,40));content.addView(versionRow);}
         catch(android.content.pm.PackageManager.NameNotFoundException e){android.util.Log.w("Daylog","Version unavailable",e);}
+
+        gap(content,16);
+        CameraProfiles.Route route=CameraProfiles.selected(this);
+        LinearLayout cameraSettings=preferenceRow("カメラ診断・選択",route==null?"自動":"手動");
+        cameraSettings.setOnClickListener(v->{camera.unbind();camera.resetSelection();startActivity(new Intent(this,CameraDiagnosticsActivity.class));});content.addView(cameraSettings);gap(content,1);
 
     }
     private void deleteOldClips(){

@@ -23,19 +23,19 @@ public final class LocationMetadataTest {
         Clip middle=new Clip("b",2,3200,3,false,true,"Asia/Tokyo");
         Clip last=new Clip("c",3,2100,2,false,true,"Asia/Tokyo").withLocation(kyoto).withPlace("京都駅");
         List<Clip> clips=List.of(first,middle,last);
-        JSONArray timeline=new JSONObject(LocationMetadata.timeline(clips)).getJSONArray("clips");
-        assertThat(timeline.length()).isEqualTo(2);assertThat(timeline.getJSONObject(0).getLong("startMs")).isEqualTo(0);
-        assertThat(timeline.getJSONObject(1).getLong("startMs")).isEqualTo(5000);
-        assertThat(timeline.getJSONObject(1).getString("place")).isEqualTo("京都駅");
-        Set<Metadata.Entry> entries=new HashSet<>();entries.add(new Mp4LocationData(35,139));LocationMetadata.apply(entries,clips);
+        JSONArray timeline=new JSONObject(LocationMetadata.timeline(clips,"",true)).getJSONArray("clips");
+        assertThat(timeline.length()).isEqualTo(3);assertThat(timeline.getJSONObject(0).getLong("startMs")).isEqualTo(0);
+        assertThat(timeline.getJSONObject(2).getLong("startMs")).isEqualTo(5000);
+        assertThat(timeline.getJSONObject(2).getString("place")).isEqualTo("京都駅");
+        Set<Metadata.Entry> entries=new HashSet<>();entries.add(new Mp4LocationData(35,139));LocationMetadata.apply(entries,clips,"",true);
         assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isFalse();
         assertThat(entries.stream().anyMatch(e->e instanceof MdtaMetadataEntry m&&m.key.equals(LocationMetadata.KEY))).isTrue();
-        LocationMetadata.apply(entries,List.of(first));
+        LocationMetadata.apply(entries,List.of(first),"",true);
         assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isTrue();
     }
     @Test public void manualPlaceWithoutPermissionDoesNotInventCoordinates() throws Exception{
         Clip clip=new Clip("a",1,2000,2,false,true,"UTC").withPlace("京都駅");
-        JSONObject item=new JSONObject(LocationMetadata.timeline(List.of(clip))).getJSONArray("clips").getJSONObject(0);
+        JSONObject item=new JSONObject(LocationMetadata.timeline(List.of(clip),"",true)).getJSONArray("clips").getJSONObject(0);
         assertThat(item.getString("place")).isEqualTo("京都駅");assertThat(item.has("latitude")).isFalse();
     }
 }
