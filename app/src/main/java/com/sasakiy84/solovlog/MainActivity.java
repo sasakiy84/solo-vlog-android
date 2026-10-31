@@ -209,7 +209,7 @@ public final class MainActivity extends ComponentActivity {
         locationIcon=new Ui.Icon(this,locationEnabled()?"pin":"pin_off",Color.WHITE,"位置情報をオン",this::toggleLocation);
         Ui.Icon audio=new Ui.Icon(this,sound()?"mic":"muted",Color.WHITE,sound()?"音声をオフ":"音声をオン",this::toggleSound);
         Ui.Icon settings=new Ui.Icon(this,"gear",Color.WHITE,"設定",()->navigate(Screen.SETTINGS));
-        for(Ui.Icon control:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);top.addView(control,lp(48,48));captureControls.add(control);}
+        for(Ui.Icon control:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);LinearLayout.LayoutParams params=lp(48,48);params.setMarginStart(dp(8));top.addView(control,params);captureControls.add(control);}
         updateLocationIcon();stage.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
         LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(16),dp(8),dp(16),dp(24));controls.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x00000000,0xB0000000}));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
@@ -284,10 +284,13 @@ public final class MainActivity extends ComponentActivity {
                 repository.add(clip);lastSaved=clip;
                 main.post(()->{
                     captureBusy=false;if(isDestroyed()){io.shutdown();return;}
-                    if(clip.location()!=null)resolvePlaces(clip,names->{});
+                    boolean openEditor=screen==Screen.CAMERA&&foreground&&prefs.getBoolean("postCaptureEdit",true);
+                    if(clip.location()!=null)resolvePlaces(clip,names->{
+                        if(!openEditor&&locationEnabled()&&!prefs.getBoolean("placeChoice_"+clip.id(),false)){String city=PlaceResolver.defaultCity(names);if(!city.isEmpty())repository.place(clip.id(),city);}
+                    });
                     if(screen==Screen.CAMERA){
                         resetCaptureControls();
-                        if(foreground&&prefs.getBoolean("postCaptureEdit",true)){
+                        if(openEditor){
                             cameraReady=false;camera.unbind();locations.stop();
                             startActivity(new Intent(this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,clip.id()));
                         }

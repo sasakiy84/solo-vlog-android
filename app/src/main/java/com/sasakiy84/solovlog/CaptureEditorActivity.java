@@ -130,13 +130,30 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private void saveAndReview(){main.removeCallbacks(save);if(!saveEdits())return;String day=JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString();startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("review_day",day).putExtra("edits_saved",true));finish();}
     private void refreshPlaces(){
         if(isFinishing()||isDestroyed())return;if(placeGesture){pendingPlaceRefresh=true;return;}pendingPlaceRefresh=false;choices.removeAllViews();LinkedHashSet<String> names=new LinkedHashSet<>();if(!clip.place().isBlank())names.add(clip.place());names.addAll(repository.nearbyPlaces(clip.location()));names.addAll(repository.placeCandidates(clip.id()));if(clip.location()!=null)names.add(clip.location().label());
-        for(String name:names){TextView chip=button(name,clip.place().equals(name),()->{clip=clip.withPlace(clip.place().equals(name)?"":name);repository.rememberPlace(clip.location(),clip.place());changed();saveEdits();refreshPlaces();placeScroll.scrollTo(0,0);});chip.setSingleLine(true);chip.setMaxWidth(dp(220));chip.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.setContentDescription((clip.place().equals(name)?"場所の表示を外す ":"場所を表示 ")+name);chip.setCompoundDrawablesRelative(Ui.drawable(this,"pin",clip.place().equals(name)?Ui.BG:Ui.INK),null,null,null);chip.setCompoundDrawablePadding(dp(8));LinearLayout.LayoutParams params=size(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(chip,params);}
+        for(String name:names){TextView chip=button(name,clip.place().equals(name),()->{markPlaceChoice();clip=clip.withPlace(clip.place().equals(name)?"":name);repository.rememberPlace(clip.location(),clip.place());changed();saveEdits();refreshPlaces();placeScroll.scrollTo(0,0);});chip.setSingleLine(true);chip.setMaxWidth(dp(220));chip.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.setContentDescription((clip.place().equals(name)?"場所の表示を外す ":"場所を表示 ")+name);chip.setCompoundDrawablesRelative(Ui.drawable(this,"pin",clip.place().equals(name)?Ui.BG:Ui.INK),null,null,null);chip.setCompoundDrawablePadding(dp(8));LinearLayout.LayoutParams params=size(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(chip,params);}
         if(clip.location()==null){TextView current=button(locating?"取得中":locations.granted()?"位置を再取得":"現在地を追加",false,this::requestLocation);current.setEnabled(!locating);current.setAlpha(locating?.5f:1);choices.addView(current,size(-2,48));}
     }
-    private void resolvePlaces(){if(clip.location()==null)return;if(!repository.placeCandidates(clip.id()).isEmpty()){refreshPlaces();return;}places.resolve(clip.location(),names->{if(!names.isEmpty())repository.placeCandidates(clip.id(),names);if(!isDestroyed())refreshPlaces();});}
+    private void markPlaceChoice(){prefs.edit().putBoolean("placeChoice_"+clip.id(),true).apply();}
+    private void selectDefaultCity(java.util.List<String> names){
+        if(deleted||!prefs.getBoolean("location",true)||!locations.granted()||!clip.place().isBlank()||prefs.getBoolean("placeChoice_"+clip.id(),false))return;
+        String city=PlaceResolver.defaultCity(names);if(city.isEmpty())return;
+        clip=clip.withPlace(city);markPlaceChoice();saveEdits();
+        if(!isDestroyed()){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true));refreshPlaces();}
+    }
+    private void resolvePlaces(){
+        if(clip.location()==null)return;
+        java.util.List<String> cached=repository.placeCandidates(clip.id());
+        if(!cached.isEmpty()){selectDefaultCity(cached);refreshPlaces();return;}
+        GeoPoint point=clip.location();
+        places.resolve(point,names->{
+            if(deleted||!point.equals(clip.location()))return;
+            if(!names.isEmpty())repository.placeCandidates(clip.id(),names);
+            selectDefaultCity(names);if(!isDestroyed())refreshPlaces();
+        });
+    }
     private void editPlace(){
         EditText input=textInput(clip.place(),"場所",80);LinearLayout form=column();form.setPadding(dp(20),dp(12),dp(20),dp(12));form.addView(input,size(-1,56));
-        input.addTextChangedListener(watcher(()->{clip=clip.withPlace(input.getText().toString());changed();}));
+        input.addTextChangedListener(watcher(()->{markPlaceChoice();clip=clip.withPlace(input.getText().toString());changed();}));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("場所").setView(form).setPositiveButton("閉じる",null).create();
         dialog.setOnDismissListener(d->{main.removeCallbacks(save);saveEdits();repository.rememberPlace(clip.location(),clip.place());refreshPlaces();placeScroll.scrollTo(0,0);});
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){dialog.dismiss();return true;}return false;});dialog.show();dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);input.requestFocus();

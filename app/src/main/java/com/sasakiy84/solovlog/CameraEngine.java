@@ -136,7 +136,7 @@ public final class CameraEngine {
                 });
             }catch(SecurityException e){if(tick!=null)handler.removeCallbacks(tick);recording=null;busy=false;target.delete();listener.error("カメラ・マイクの権限が変更されました。設定を確認してください。");}
             catch(RuntimeException e){if(tick!=null)handler.removeCallbacks(tick);Log.e("DaylogCamera","Recording start failed",e);recording=null;busy=false;target.delete();listener.error("撮影を始められませんでした。カメラ・マイクの権限を確認してください。");}
-        };handler.postDelayed(arm,350);
+        };handler.postDelayed(arm,500);
     }
     public void stop(){
         if(recording!=null){if(tick!=null)handler.removeCallbacks(tick);recording.stop();}

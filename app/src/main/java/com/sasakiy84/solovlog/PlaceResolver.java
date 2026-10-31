@@ -32,13 +32,31 @@ final class PlaceResolver {
                 @Override public void onGeocode(List<Address> addresses){
                     LinkedHashSet<String> names=new LinkedHashSet<>();
                     if(!addresses.isEmpty()){
-                        Address a=addresses.get(0);for(String value:new String[]{a.getLocality(),a.getSubLocality(),a.getAdminArea(),a.getThoroughfare()})if(value!=null&&!value.isBlank())names.add(value);
+                        Address a=addresses.get(0);
+                        String city=clean(a.getLocality());
+                        if(city.isEmpty())city=clean(a.getSubAdminArea());
+                        String region=clean(a.getAdminArea());
+                        if(!city.isEmpty())names.add(city);
+                        else if(!region.isEmpty())names.add(region);
+                        String context=city.isEmpty()?region:city;
+                        for(String detail:new String[]{a.getSubLocality(),a.getThoroughfare()}){
+                            detail=clean(detail);
+                            if(!detail.isEmpty()&&!context.isEmpty())names.add(detail.startsWith(context)?detail:context+detail);
+                        }
+                        if(!region.isEmpty())names.add(region);
                     }
                     finish(key,List.copyOf(names));
                 }
                 @Override public void onError(String message){finish(key,List.of());}
             });
         }catch(IllegalArgumentException|IllegalStateException|SecurityException e){android.util.Log.w("DaylogPlaces","Address lookup unavailable",e);finish(key,List.of());}
+    }
+    private static String clean(String value){return value==null?"":value.strip();}
+    static String defaultCity(List<String> names){
+        if(names.isEmpty())return "";
+        String name=names.get(0);
+        // Never substitute a prefecture or an isolated block number for a municipality.
+        return name.matches(".*[都道府県]$")||name.matches("[0-9０-９一二三四五六七八九十]+丁目.*")?"":name;
     }
     private void finish(String key,List<String> names){main.post(()->{
         if(!names.isEmpty()){if(cache.size()>=64)cache.remove(cache.keySet().iterator().next());cache.put(key,names);}

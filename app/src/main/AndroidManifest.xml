@@ -18,6 +18,8 @@
         android:icon="@drawable/ic_daylog"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:theme="@style/Theme.Daylog">
+        <!-- Keep the selected recording orientation on Android 16 large screens too. -->
+        <property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true" />
         <service android:name=".RenderService" android:exported="false" android:foregroundServiceType="mediaProcessing" />
         <receiver android:name=".ReminderReceiver" android:exported="false">
             <intent-filter>
