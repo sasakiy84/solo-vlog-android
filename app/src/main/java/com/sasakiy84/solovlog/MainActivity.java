@@ -468,7 +468,7 @@ public final class MainActivity extends ComponentActivity {
         ExoPlayer player;
         EditorPreview(Clip clip,String dayCaption){
             frame=new Ui.AspectFrame(MainActivity.this,clip.landscape());
-            video=new TextureView(MainActivity.this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+            video=new TextureView(MainActivity.this);video.setKeepScreenOn(true);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
             captions=new CaptionOverlay.Preview(MainActivity.this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
             previewAudio=new PreviewAudioButton(MainActivity.this,audible->{if(player!=null)player.setVolume(audible?1:0);});previewAudio.attachTo(frame);
         }

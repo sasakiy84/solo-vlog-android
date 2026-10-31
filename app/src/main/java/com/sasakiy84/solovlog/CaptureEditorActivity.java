@@ -105,7 +105,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
         String time=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));
         toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new TextureView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new TextureView(this);video.setKeepScreenOn(true);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
         captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
         previewAudio=new PreviewAudioButton(this,audible->{if(previewPlayer!=null)previewPlayer.setVolume(audible?1:0);});previewAudio.attachTo(frame);
         content.addView(frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
