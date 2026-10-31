@@ -43,7 +43,7 @@ final class Ui {
     }
     static android.graphics.drawable.Drawable drawable(Context c,String kind,int color){
         int resource=switch(kind){
-            case "back"->R.drawable.ic_arrow_back;case "gear"->R.drawable.ic_settings;
+            case "volume_on"->R.drawable.ic_volume_up;case "volume_off"->R.drawable.ic_volume_off;case "back"->R.drawable.ic_arrow_back;case "gear"->R.drawable.ic_settings;
             case "library"->R.drawable.ic_video_library;case "flip"->R.drawable.ic_cameraswitch;
             case "mic"->R.drawable.ic_mic;case "muted"->R.drawable.ic_mic_off;
             case "check"->R.drawable.ic_check_circle;case "unchecked"->R.drawable.ic_circle;

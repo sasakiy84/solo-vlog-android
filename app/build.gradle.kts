@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.5").get()
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.6").get()
 require(Regex("(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})").matches(releaseVersion)) {
     "releaseVersion must be MAJOR.MINOR.PATCH without leading zeros"
 }
@@ -54,6 +54,7 @@ android {
 }
 
 dependencies {
+    implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.activity:activity:1.10.1")
     implementation("androidx.core:core:1.16.0")
     implementation("androidx.camera:camera-camera2:1.5.0")

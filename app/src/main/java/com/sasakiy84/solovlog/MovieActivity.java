@@ -43,6 +43,7 @@ public final class MovieActivity extends ComponentActivity {
     private final List<View> controls=new ArrayList<>();
     private TextureView video;
     private ExoPlayer player;
+    private PreviewAudioButton previewAudio;
     private int previewIndex;
     private long previewPosition;
     private String previewClipId="",observedRenderId;
@@ -84,7 +85,7 @@ public final class MovieActivity extends ComponentActivity {
         LinearLayout root=column();root.setBackgroundColor(Ui.BG);root.setOnApplyWindowInsetsListener((v,insets)->{Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);boolean visible=insets.isVisible(WindowInsets.Type.ime());if(visible!=keyboardVisible){keyboardVisible=visible;if(render!=null)updateUi();}return insets;});setContentView(root);root.requestApplyInsets();
         LinearLayout toolbar=row();toolbar.addView(new Ui.Icon(this,"back",Ui.INK,"一覧に戻る",this::finish),size(56,56));toolbar.addView(Ui.text(this,"レンダリング",19,Ui.INK));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(20));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        Clip first=draft.clips(repository).get(0);Ui.AspectFrame frame=new Ui.AspectFrame(this,first.landscape());video=new TextureView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));captions=new CaptionOverlay.Preview(this,first,draft.caption,draft.showTime,draft.showDate);frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));content.addView(frame,size(-1,getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE?180:280));
+        Clip first=draft.clips(repository).get(0);Ui.AspectFrame frame=new Ui.AspectFrame(this,first.landscape());video=new TextureView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));captions=new CaptionOverlay.Preview(this,first,draft.caption,draft.showTime,draft.showDate);frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));previewAudio=new PreviewAudioButton(this,audible->{if(player!=null)player.setVolume(audible&&draft.audio?1:0);});previewAudio.attachTo(frame);content.addView(frame,size(-1,getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE?180:280));
         state=Ui.text(this,"",14,Ui.MUTED);state.setGravity(Gravity.CENTER);content.addView(state,size(-1,52));
         fileNameSection=column();LinearLayout.LayoutParams nameParams=size(-1,-2);nameParams.topMargin=dp(12);nameParams.bottomMargin=dp(12);content.addView(fileNameSection,nameParams);
         fileNameSection.addView(Ui.text(this,"保存名",14,Ui.MUTED),size(-1,-2));
@@ -108,7 +109,7 @@ public final class MovieActivity extends ComponentActivity {
     private void toggle(String label,boolean checked,java.util.function.Consumer<Boolean> changed){LinearLayout line=row();line.addView(Ui.text(this,label,16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));Switch control=new Switch(this);control.setContentDescription(label);control.setChecked(checked);control.setOnCheckedChangeListener((v,value)->changed.accept(value));line.addView(control,size(56,48));settings.addView(line,size(-1,56));controls.add(control);}
     private void ensurePlayer(){
         if(player!=null)return;
-        ExoPlayer created=new ExoPlayer.Builder(this).build();player=created;created.setVideoTextureView(video);created.setRepeatMode(Player.REPEAT_MODE_ALL);created.setVolume(draft.audio?1:0);
+        ExoPlayer created=new ExoPlayer.Builder(this).build();player=created;created.setVideoTextureView(video);created.setRepeatMode(Player.REPEAT_MODE_ALL);created.setVolume(previewAudio.isAudible()&&draft.audio?1:0);
         created.addListener(new Player.Listener(){
             @Override public void onMediaItemTransition(MediaItem item,int reason){if(player==created&&!showingResult)updatePreviewCaption();}
             @Override public void onPlayerError(PlaybackException error){if(player!=created)return;android.util.Log.w("DaylogMovie","Preview playback failed",error);toast("動画を再生できませんでした");}
@@ -124,7 +125,7 @@ public final class MovieActivity extends ComponentActivity {
         captions.update(clip,draft.caption,draft.showTime,draft.showDate);
         if(!clip.id().equals(previewClipId)){previewClipId=clip.id();captions.loadColors(repository.file(clip.id()),io);}
     }
-    private void changed(){if(player!=null)player.setVolume(draft.audio?1:0);draft.status="editing";draft.error="";draft.savedUri="";persist();updateUi();}
+    private void changed(){if(player!=null)player.setVolume(previewAudio.isAudible()&&draft.audio?1:0);draft.status="editing";draft.error="";draft.savedUri="";persist();updateUi();}
     private boolean persist(){try{draft.save(this);return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
     private void startRender(){if(saving||"rendering".equals(draft.status))return;if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}draft.status="rendering";draft.error="";if(!persist()){draft.status="editing";return;}try{RenderService.activeId=draft.id;ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id));updateUi();}catch(RuntimeException e){RenderService.activeId=null;draft.status="error";draft.error="レンダリングを開始できませんでした";persist();updateUi();}}
     private void refreshSavedCopy(){
@@ -137,7 +138,7 @@ public final class MovieActivity extends ComponentActivity {
     private void updateUi(){
         if(video==null)return;observedRenderId=RenderService.activeId;boolean busy="rendering".equals(draft.status)||observedRenderId!=null,ready=("ready".equals(draft.status)||"saving".equals(draft.status))&&draft.movie(this).isFile();saving="saving".equals(draft.status);
         for(View control:controls)control.setEnabled(!busy&&!saving);render.setVisibility(keyboardVisible&&ready?View.GONE:View.VISIBLE);render.setEnabled(!busy&&!saving);render.setAlpha(busy||saving?.45f:1f);render.setText(busy?"レンダリング中":"レンダリング");save.setVisibility(ready?View.VISIBLE:View.GONE);save.setEnabled(!saving);save.setText(saving?"保存中":draft.savedUri.isEmpty()?"保存":"開く");
-        fileNameSection.setVisibility(ready?View.VISIBLE:View.GONE);
+        fileNameSection.setVisibility(ready?View.VISIBLE:View.GONE);previewAudio.setVisibility(!busy&&draft.audio?View.VISIBLE:View.GONE);
         state.setText(busy?"レンダリング中":ready?(draft.savedUri.isEmpty()?"レンダリング完了"+(draft.outputResolution.isEmpty()?"":" · "+draft.outputResolution):""):"error".equals(draft.status)?draft.error:"");
         state.setVisibility(state.getText().length()==0?View.GONE:View.VISIBLE);
         if(!foreground){releasePlayer();return;}

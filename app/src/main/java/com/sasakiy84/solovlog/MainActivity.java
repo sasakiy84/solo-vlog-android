@@ -297,7 +297,7 @@ public final class MainActivity extends ComponentActivity {
                     captureBusy=false;if(isDestroyed()){io.shutdown();return;}
                     boolean openEditor=screen==Screen.CAMERA&&foreground&&prefs.getBoolean("postCaptureEdit",true);
                     if(clip.location()!=null)resolvePlaces(clip,names->{
-                        if(!openEditor&&locationEnabled()&&!prefs.getBoolean("placeChoice_"+clip.id(),false)){String city=PlaceResolver.defaultCity(names);if(!city.isEmpty())repository.place(clip.id(),city);}
+                        if(!openEditor&&locationEnabled()&&!prefs.getBoolean("placeChoice_"+clip.id(),false)){String city=names.city();if(!city.isEmpty())repository.place(clip.id(),city);}
                     });
                     if(screen==Screen.CAMERA){
                         resetCaptureControls();
@@ -358,11 +358,11 @@ public final class MainActivity extends ComponentActivity {
             locationAfterSettings=ready;locationSettingsCancelled=cancel;startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
         }).setNegativeButton("キャンセル",(d,w)->cancel.run()).show();
     }
-    private void resolvePlaces(Clip clip,java.util.function.Consumer<List<String>> ready){
-        if(clip.location()==null){ready.accept(List.of());return;}
-        List<String> cached=repository.placeCandidates(clip.id());
-        if(!cached.isEmpty()){ready.accept(cached);return;}
-        places.resolve(clip.location(),names->{if(!names.isEmpty())repository.placeCandidates(clip.id(),names);ready.accept(names);});
+    private void resolvePlaces(Clip clip,java.util.function.Consumer<PlaceSuggestions> ready){
+        if(clip.location()==null){ready.accept(PlaceSuggestions.EMPTY);return;}
+        PlaceSuggestions cached=repository.placeCandidates(clip.id());
+        if(!cached.isEmpty())ready.accept(cached);
+        places.resolve(clip.location(),names->{PlaceSuggestions merged=names.withFallback(repository.placeCandidates(clip.id()));if(!merged.isEmpty())repository.placeCandidates(clip.id(),merged);ready.accept(merged);});
     }
 
     private void requestPermissions(boolean audioOnly){
@@ -450,14 +450,16 @@ public final class MainActivity extends ComponentActivity {
         final Ui.AspectFrame frame;
         final TextureView video;
         final CaptionOverlay.Preview captions;
+        final PreviewAudioButton previewAudio;
         ExoPlayer player;
         EditorPreview(Clip clip,String dayCaption){
             frame=new Ui.AspectFrame(MainActivity.this,clip.landscape());
             video=new TextureView(MainActivity.this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
             captions=new CaptionOverlay.Preview(MainActivity.this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
+            previewAudio=new PreviewAudioButton(MainActivity.this,audible->{if(player!=null)player.setVolume(audible?1:0);});previewAudio.attachTo(frame);
         }
         void start(Clip clip){
-            stop();player=new ExoPlayer.Builder(MainActivity.this).build();player.setVideoTextureView(video);player.setRepeatMode(Player.REPEAT_MODE_ONE);
+            stop();player=new ExoPlayer.Builder(MainActivity.this).build();player.setVideoTextureView(video);player.setVolume(previewAudio.isAudible()?1:0);player.setRepeatMode(Player.REPEAT_MODE_ONE);
             player.addListener(new Player.Listener(){@Override public void onPlayerError(PlaybackException error){android.util.Log.w("DaylogPreview","Clip playback failed",error);toast("動画を再生できませんでした");}});
             player.setMediaItem(new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
@@ -485,8 +487,7 @@ public final class MainActivity extends ComponentActivity {
         EditorPreview panel=new EditorPreview(clip,repository.dayCaption(day));
         content.addView(panel.frame,lp(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:280));
         gap(content,10);
-        HorizontalScrollView placeScroll=new HorizontalScrollView(this);placeScroll.setHorizontalScrollBarEnabled(false);LinearLayout choices=row();placeScroll.addView(choices);
-        LinearLayout locationLine=row();locationLine.addView(placeScroll,new LinearLayout.LayoutParams(0,dp(52),1));content.addView(locationLine,lp(-1,52));gap(content,8);
+        PlaceChoicesView choices=new PlaceChoicesView(this);content.addView(choices,lp(-1,-2));gap(content,12);
         EditText input=captionInput(clip.caption(),"クリップのテキスト",120);input.setTextSize(20);content.addView(input,lp(-1,-2));
         Runnable save=()->{if(!deleted[0])try{repository.caption(clip.id(),edited[0].caption());repository.place(clip.id(),edited[0].place());}catch(RuntimeException e){toast("編集内容を保存できませんでした");}};activeEditorSave=save;
         Uri[] savedUri={null};TextView[] saveControl={null};
@@ -499,14 +500,10 @@ public final class MainActivity extends ComponentActivity {
             save.run();Clip snapshot=edited[0];saveClip(snapshot,saveVideo,panel,uri->{if(snapshot.equals(edited[0])){savedUri[0]=uri;saveVideo.setText("開く");}});
         });
         java.util.function.Consumer<String> selectPlace=name->{prefs.edit().putBoolean("placeChoice_"+edited[0].id(),true).apply();edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
-        refreshChoices[0]=()->{
-            choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
-            if(!edited[0].place().isBlank())names.add(edited[0].place());names.addAll(repository.nearbyPlaces(edited[0].location()));names.addAll(repository.placeCandidates(clip.id()));
-            if(edited[0].location()!=null)names.add(edited[0].location().label());
-            for(String name:names){TextView chip=button(name,"pin",edited[0].place().equals(name),()->selectPlace.accept(name));chip.setContentDescription((edited[0].place().equals(name)?"場所の表示を外す ":"場所を表示 ")+name);chip.setSingleLine(true);chip.setMaxWidth(dp(220));chip.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.setSelected(edited[0].place().equals(name));LinearLayout.LayoutParams params=lp(-2,48);params.setMargins(0,0,dp(8),0);choices.addView(chip,params);}
-            if(names.isEmpty())choices.addView(button("場所を入力","pin",false,()->editPlaceName(edited,save,refreshPreview,refreshChoices[0])),lp(-2,48));
-        };
-        locationLine.addView(icon("edit","場所を入力",()->editPlaceName(edited,save,refreshPreview,refreshChoices[0])),lp(48,48));
+        refreshChoices[0]=()->choices.show(repository.placeCandidates(clip.id()),edited[0].place(),selectPlace,()->{
+            PlaceSuggestions suggestions=repository.placeCandidates(clip.id());List<String> others=suggestions.others(edited[0],repository);List<String> labels=new ArrayList<>(others);labels.add("手入力");
+            new AlertDialog.Builder(this).setTitle("その他").setItems(labels.toArray(new String[0]),(d,which)->{if(which==others.size())editPlaceName(edited,save,refreshPreview,refreshChoices[0]);else selectPlace.accept(others.get(which));}).setNegativeButton("キャンセル",null).show();
+        });
         input.addTextChangedListener(new TextWatcher(){
             @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){edited[0]=edited[0].withCaption(s.toString());refreshPreview.run();main.removeCallbacks(save);main.postDelayed(save,250);}

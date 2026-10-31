@@ -87,15 +87,14 @@ public final class ClipRepository extends SQLiteOpenHelper {
         ContentValues values=new ContentValues();values.put("latitude",point.latitude());values.put("longitude",point.longitude());values.put("accuracy",point.accuracyMeters());values.put("location_names","");
         getWritableDatabase().update("clips",values,"id=?",new String[]{id});
     }
-    public java.util.List<String> placeCandidates(String id){
+    public PlaceSuggestions placeCandidates(String id){
         try(Cursor c=getReadableDatabase().query("clips",new String[]{"location_names"},"id=?",new String[]{id},null,null,null)){
-            if(!c.moveToFirst()||c.getString(0).isEmpty())return java.util.List.of();
-            org.json.JSONArray data=new org.json.JSONArray(c.getString(0));java.util.List<String> names=new java.util.ArrayList<>();
-            for(int i=0;i<data.length();i++)names.add(data.getString(i));return names;
-        }catch(org.json.JSONException e){android.util.Log.w("DaylogPlaces","Invalid cached place names",e);return java.util.List.of();}
+            if(!c.moveToFirst()||c.getString(0).isEmpty())return PlaceSuggestions.EMPTY;
+            return PlaceSuggestions.parse(c.getString(0));
+        }catch(org.json.JSONException e){android.util.Log.w("DaylogPlaces","Invalid cached place names",e);return PlaceSuggestions.EMPTY;}
     }
-    public void placeCandidates(String id,java.util.List<String> names){
-        ContentValues values=new ContentValues();values.put("location_names",new org.json.JSONArray(names).toString());getWritableDatabase().update("clips",values,"id=?",new String[]{id});
+    public void placeCandidates(String id,PlaceSuggestions suggestions){
+        ContentValues values=new ContentValues();values.put("location_names",suggestions.json());getWritableDatabase().update("clips",values,"id=?",new String[]{id});
     }
     public void rememberPlace(GeoPoint point,String name){
         if(point==null||name.isBlank()||name.equals(point.label()))return;
