@@ -46,7 +46,6 @@ import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 import androidx.media3.common.util.UnstableApi;
 import java.io.File;
@@ -82,7 +81,7 @@ public final class MainActivity extends ComponentActivity {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final LruCache<String,Bitmap> thumbnails=new LruCache<>(24);
     private LinearLayout root;
-    private PreviewView preview;
+    private CameraPreview preview;
     private Ui.Shutter shutter;
     private ZoomControls zoomControls;
     private TextView liveLabel,cameraHint,undo;
@@ -147,6 +146,7 @@ public final class MainActivity extends ComponentActivity {
         if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
+        else if(screen==Screen.SETTINGS&&!editorOpen)renderSettingsBody();
     }
     @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacks(resumeAfterRender);if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
@@ -215,8 +215,9 @@ public final class MainActivity extends ComponentActivity {
         root.setBackgroundColor(Color.BLACK);getWindow().getInsetsController().hide(WindowInsets.Type.systemBars());
         getWindow().getInsetsController().setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         FrameLayout stage=new FrameLayout(this);root.addView(stage,new LinearLayout.LayoutParams(-1,-1));
-        preview=new PreviewView(this);preview.setContentDescription("カメラプレビュー");stage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
-        if(prefs.getBoolean("grid",true))stage.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
+        Ui.AspectFrame imageStage=new Ui.AspectFrame(this,landscape());stage.addView(imageStage,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
+        preview=new CameraPreview(this,CameraProfiles.selected(this));preview.setContentDescription("カメラプレビュー");imageStage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
+        if(prefs.getBoolean("grid",true))imageStage.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
         LinearLayout top=row();top.setPadding(dp(12),dp(12),dp(12),dp(8));
         liveLabel=bold("準備中",12,Color.WHITE);liveLabel.setPadding(dp(12),dp(8),dp(12),dp(8));liveLabel.setBackground(Ui.rounded(this,0x88000000,18));
         if(!leftHanded){top.addView(liveLabel,lp(-2,-2));top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));}
@@ -251,7 +252,7 @@ public final class MainActivity extends ComponentActivity {
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
             @Override public void binding(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);if(zoomControls!=null)zoomControls.setAvailable(false);}}
-            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
+            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(!captureBusy);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void zoomChanged(androidx.camera.core.ZoomState state){if(screen==Screen.CAMERA&&zoomControls!=null&&!isDestroyed())zoomControls.update(state);}
             @Override public void zoomError(String message){if(!isDestroyed())toast(message);}
             @Override public void progress(float fraction,boolean stabilizing){
@@ -578,6 +579,9 @@ public final class MainActivity extends ComponentActivity {
     private void renderSettingsBody(){
         root.removeAllViews();toolbar("設定",()->navigate(settingsReturn),false);
         LinearLayout content=scrollBody();
+        CameraProfiles.Route route=CameraProfiles.selected(this);
+        LinearLayout cameraSettings=preferenceRow("カメラ診断・選択",route==null?"自動":"手動");
+        cameraSettings.setOnClickListener(v->{camera.unbind();camera.resetSelection();startActivity(new Intent(this,CameraDiagnosticsActivity.class));});content.addView(cameraSettings);gap(content,1);
         boolean leftHanded=prefs.getBoolean("leftHanded",false);LinearLayout handedness=preferenceRow("利き手",leftHanded?"左利き":"右利き");
         handedness.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("利き手").setSingleChoiceItems(new String[]{"右利き","左利き"},leftHanded?1:0,(dialog,which)->{prefs.edit().putBoolean("leftHanded",which==1).apply();dialog.dismiss();renderSettingsBody();}).setNegativeButton("キャンセル",null).show());content.addView(handedness);gap(content,1);
         LinearLayout format=preferenceRow("動画の向き",prefs.getBoolean("landscape",false)?"横":"縦");

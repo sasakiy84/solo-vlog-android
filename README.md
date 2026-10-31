@@ -13,10 +13,12 @@ Android 16 以上向けの、短い動画を1日分にまとめる個人用 Vlog
 
 設定で利き手、動画の向き、1日の区切り時刻、位置情報、1時間ごとの撮影通知を変更できます。
 
+設定の「カメラ診断・選択」で候補の試し撮り・再生・適用と診断結果の共有ができます。
+
 ## リリース
 
 ```sh
-python3 scripts/release.py 1.0.9
+python3 scripts/release.py 1.0.10
 ```
 
 GitHub Actions はリリース用のみです。テスト・lint は実行せず、署名付き APK とチェックサムを GitHub Releases に公開します。

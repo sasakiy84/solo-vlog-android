@@ -25,9 +25,16 @@ final class CameraLenses {
     }
     final Lens standard,wide;
     private CameraLenses(Lens standard,Lens wide){this.standard=standard;this.wide=wide;}
+    static CameraLenses forced(CameraSelector selector,CameraInfo info,String physicalId,float scale){
+        CameraInfo physical=null;
+        if(physicalId!=null){for(CameraInfo child:info.getPhysicalCameraInfos())if(Camera2CameraInfo.from(child).getCameraId().equals(physicalId)){physical=child;break;}
+            if(physical==null)throw new IllegalArgumentException("CameraX cannot expose this physical camera");}
+        Lens range=lens(selector,info,scale);
+        return new CameraLenses(new Lens(selector,scale,range.minimum(),range.maximum(),physical),null);
+    }
     static CameraLenses discover(ProcessCameraProvider provider,CameraSelector selector,boolean front){
         CameraInfo main=provider.getCameraInfo(selector);ZoomState zoom=main.getZoomState().getValue();
-        if(front||zoom.getMinZoomRatio()<1)return new CameraLenses(lens(selector,main,1),null);
+        if(front||zoom.getMinZoomRatio()<=.6f)return new CameraLenses(lens(selector,main,1),null);
         List<CameraInfo> candidates=new ArrayList<>(provider.getAvailableCameraInfos());
         java.util.Set<CameraInfo> physical=main.getPhysicalCameraInfos();candidates.addAll(physical);
         CameraInfo widest=null;float smallest=.85f;
@@ -39,12 +46,12 @@ final class CameraLenses {
         if(widest!=null){
             boolean internal=physical.contains(widest);
             CameraSelector wideSelector=internal?selector:widest.getCameraSelector();
-            Lens range=lens(wideSelector,internal?main:widest,.6f);
+            Lens range=lens(wideSelector,internal?main:widest,smallest);
             Lens wide=new Lens(wideSelector,range.scale(),range.minimum(),range.maximum(),internal?widest:null);
             return new CameraLenses(lens(selector,main,1),wide);
         }
-        // Some vendors expose only one zoomable camera, with its widest view reported as 1×.
-        return new CameraLenses(lens(selector,main,zoom.getMaxZoomRatio()>1?.6f:1),null);
+        // Preserve the actual field-of-view scale when no wider camera is available.
+        return new CameraLenses(lens(selector,main,1),null);
     }
     private static Lens lens(CameraSelector selector,CameraInfo info,float scale){
         ZoomState state=info.getZoomState().getValue();

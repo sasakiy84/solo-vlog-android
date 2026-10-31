@@ -42,6 +42,7 @@ public final class CameraEngine {
     public interface Listener {
         void ready();
         default void binding() {}
+        default void diagnostic(String stage,String detail) {}
         default void zoomChanged(ZoomState state) {}
         default void zoomError(String message) {}
         void progress(float fraction, boolean stabilizing);
@@ -63,18 +64,33 @@ public final class CameraEngine {
     private Preview boundPreview;
     private VideoCapture<Recorder> boundVideo;
     private PreviewView preview;
+    private CameraPreview stage;
+    private DirectCameraEngine direct;
     private Recording recording;
-    private boolean busy,front,horizontal,bound;
+    private boolean busy,front,horizontal,bound,selectedSuspended;
     private long started,capturedAt;
     private Runnable arm,tick;
     private Listener bindingListener;
 
-    public CameraEngine(Context context,LifecycleOwner owner){this.context=context;this.owner=owner;}
-    public void bind(PreviewView target,boolean landscape,Listener listener){
+    public CameraEngine(Context context,LifecycleOwner owner){this.context=context;this.owner=owner;
+        owner.getLifecycle().addObserver(new androidx.lifecycle.DefaultLifecycleObserver(){@Override public void onStop(LifecycleOwner owner){if(direct!=null){direct.close();direct=null;}}});
+    }
+    public void bind(CameraPreview target,boolean landscape,Listener listener){
+        stage=target;bindingListener=listener;
+        if(target.route!=null&&!target.route.cameraX()&&!selectedSuspended){
+            horizontal=landscape;
+            preview=null;bound=false;releaseUseCases();
+            if(direct==null||!direct.matches(target.route,landscape)){if(direct!=null)direct.close();direct=new DirectCameraEngine(context,target.route,landscape,listener);}
+            direct.bind(target.direct(),listener);return;
+        }
+        if(direct!=null){direct.close();direct=null;}
+        bindCameraX(target.cameraX(),landscape,listener);
+    }
+    private void bindCameraX(PreviewView target,boolean landscape,Listener listener){
         if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
         preview=target;horizontal=landscape;bindingListener=listener;listener.binding();
         target.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
-        target.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        target.setScaleType(PreviewView.ScaleType.FIT_CENTER);
         var future=ProcessCameraProvider.getInstance(context);
         future.addListener(()->{
             if(preview!=target)return;
@@ -87,7 +103,11 @@ public final class CameraEngine {
                     if(!provider.hasCamera(selector))throw new IllegalStateException("No available camera");
                     front=!front;
                 }
-                if(lenses==null)lenses=CameraLenses.discover(provider,selector,front);
+                if(stage!=null&&stage.route!=null&&stage.route.cameraX()&&!selectedSuspended){
+                    CameraProfiles.Route route=stage.route;
+                    selector=new CameraSelector.Builder().addCameraFilter(infos->infos.stream().filter(info->androidx.camera.camera2.interop.Camera2CameraInfo.from(info).getCameraId().equals(route.cameraId())).toList()).build();
+                    if(lenses==null){lenses=CameraLenses.forced(selector,provider.getCameraInfo(selector),route.physicalId(),CameraProfiles.scale(context.getSystemService(android.hardware.camera2.CameraManager.class),route));requestedZoom=lenses.standard.minimum();}
+                }else if(lenses==null){lenses=CameraLenses.discover(provider,selector,front);if(stage!=null&&stage.widestOnOpen)requestedZoom=Math.min(lenses.standard.minimum(),lenses.wide==null?lenses.standard.minimum():lenses.wide.minimum());}
                 activeLens=lenses.forRatio(requestedZoom);selector=activeLens.selector();
                 CameraInfo info=provider.getCameraInfo(selector);
                 String requested=context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto");
@@ -115,13 +135,14 @@ public final class CameraEngine {
                 ViewPort viewport=new ViewPort.Builder(new Rational(landscape?16:9,landscape?9:16),rotation).setScaleType(ViewPort.FILL_CENTER).build();
                 Camera camera=provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
                 boundCamera=camera;boundPreview=viewfinder;boundVideo=video;bound=true;
+                listener.diagnostic("cameraXBound","camera="+androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.getCameraInfo()).getCameraId()+", physical="+activeLens.physicalId()+", scale="+activeLens.scale()+", quality="+actualQuality);
                 zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));};
                 camera.getCameraInfo().getZoomState().observe(owner,zoomObserver);
                 setZoom(requestedZoom);listener.ready();
             }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
-    public void unbind(){preview=null;bound=false;releaseUseCases();}
+    public void unbind(){stage=null;if(direct!=null){direct.close();direct=null;}preview=null;bound=false;releaseUseCases();}
     private void releaseUseCases(){
         zoomRequest++;
         if(boundCamera!=null&&zoomObserver!=null)boundCamera.getCameraInfo().getZoomState().removeObserver(zoomObserver);
@@ -130,16 +151,21 @@ public final class CameraEngine {
         if(provider!=null&&boundPreview!=null&&boundVideo!=null)provider.unbind(boundPreview,boundVideo);
         boundPreview=null;boundVideo=null;
     }
+    public void resetSelection(){selectedSuspended=false;front=false;lenses=null;requestedZoom=1;}
     public void flip(){
+        if(direct==null&&stage!=null&&stage.route!=null&&stage.route.cameraX()&&!selectedSuspended){selectedSuspended=true;front=boundCamera!=null&&boundCamera.getCameraInfo().getLensFacing()!=CameraSelector.LENS_FACING_FRONT;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);return;}
+        if(direct==null&&selectedSuspended&&stage!=null&&stage.route!=null){selectedSuspended=false;front=false;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);return;}
+        if(direct!=null){if(direct.busy())return;front=!direct.frontFacing();selectedSuspended=true;direct.close();direct=null;lenses=null;requestedZoom=1;bind(stage,horizontal,bindingListener);return;}
         if(provider==null||preview==null)throw new IllegalStateException("Camera is not ready");
         CameraSelector next=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
         try { if(!provider.hasCamera(next))throw new IllegalStateException("Camera unavailable"); }
         catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
-        front=!front;lenses=null;requestedZoom=1;bound=false;bind(preview,horizontal,bindingListener);
+        front=!front;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);
     }
     public void setZoom(float ratio){
+        if(direct!=null){direct.setZoom(ratio);return;}
         Camera camera=boundCamera;if(camera==null||!bound||!Float.isFinite(ratio))return;
-        if(!busy&&lenses.forRatio(ratio)!=activeLens){requestedZoom=ratio;bound=false;bind(preview,horizontal,bindingListener);return;}
+        if(!busy&&lenses.forRatio(ratio)!=activeLens){requestedZoom=ratio;bound=false;bind(stage,horizontal,bindingListener);return;}
         ZoomState state=camera.getCameraInfo().getZoomState().getValue();if(state==null)return;
         float scale=activeLens.scale();
         requestedZoom=Math.max(state.getMinZoomRatio(),Math.min(state.getMaxZoomRatio(),ratio/scale))*scale;
@@ -163,9 +189,10 @@ public final class CameraEngine {
         if(boundCamera==null||lenses==null)return;ZoomState state=boundCamera.getCameraInfo().getZoomState().getValue();
         if(state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));
     }
-    public String actualQuality(){return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
-    public boolean busy(){return busy;}
+    public String actualQuality(){if(direct!=null)return direct.quality();return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
+    public boolean busy(){return direct!=null?direct.busy():busy;}
     public void start(File target,int seconds,boolean audio,Location location,Listener listener){
+        if(direct!=null){direct.start(target,seconds,audio,location,listener);return;}
         if(busy||!bound)return;busy=true;publishZoom();listener.progress(0,true);
         // Avoid including the physical tap in the saved clip.
         arm=()->{
@@ -205,6 +232,7 @@ public final class CameraEngine {
         };handler.postDelayed(arm,500);
     }
     public void stop(){
+        if(direct!=null){direct.stop();return;}
         if(recording!=null){if(tick!=null)handler.removeCallbacks(tick);recording.stop();}
         if(arm!=null){handler.removeCallbacks(arm);arm=null;busy=false;publishZoom();}
     }

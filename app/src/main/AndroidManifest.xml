@@ -28,6 +28,11 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.camera-reports" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/camera_report_paths" />
+        </provider>
+        <activity android:name=".CameraDiagnosticsActivity" android:exported="false" />
         <activity android:name=".ClipTrimActivity" android:exported="false" />
         <activity android:name=".MovieActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".CaptureEditorActivity" android:exported="false"
