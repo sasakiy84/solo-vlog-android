@@ -37,6 +37,7 @@ public final class VideoExporter {
     private final Handler main = new Handler(Looper.getMainLooper());
     private Transformer transformer;
     private File currentOutput;
+    private static final Object GALLERY_SAVE_LOCK=new Object();
     private static final java.util.Set<String> SAVING=java.util.concurrent.ConcurrentHashMap.newKeySet();
     static boolean isSaving(File file){return SAVING.contains(file.getAbsolutePath());}
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
@@ -79,28 +80,49 @@ public final class VideoExporter {
 
     public void saveRendered(File file,String name,Listener listener){
         String path=file.getAbsolutePath();if(!SAVING.add(path))return;
-        io.execute(()->{try{Uri uri=copyToGallery(file,name);main.post(()->{try{listener.saved(uri);}finally{SAVING.remove(path);}});}catch(Exception e){Log.e("DaylogExport","Gallery save failed",e);main.post(()->{try{listener.error("保存できませんでした。レンダリング済み動画は残っています。");}finally{SAVING.remove(path);}});}});
+        io.execute(()->{try{Uri uri; synchronized(GALLERY_SAVE_LOCK){uri=copyToGallery(file,fileName(name));}main.post(()->{try{listener.saved(uri);}finally{SAVING.remove(path);}});}catch(Exception e){Log.e("DaylogExport","Gallery save failed",e);main.post(()->{try{listener.error("保存できませんでした。レンダリング済み動画は残っています。");}finally{SAVING.remove(path);}});}});
     }
     public int progress(){if(transformer==null)return 0;androidx.media3.transformer.ProgressHolder holder=new androidx.media3.transformer.ProgressHolder();return transformer.getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE?holder.progress:-1;}
     public void cancel(){if(transformer!=null){transformer.cancel();transformer=null;}if(currentOutput!=null){currentOutput.delete();currentOutput=null;}}
     public void close(){cancel();io.shutdown();}
 
+    static String fileName(String value){
+        String name=value.strip();
+        if(name.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4"))name=name.substring(0,name.length()-4).strip();
+        if(name.isEmpty()||name.equals(".")||name.equals("..")||name.startsWith(".")||name.indexOf('/')>=0||name.indexOf('\\')>=0||name.codePoints().anyMatch(Character::isISOControl)||name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>240)
+            throw new IllegalArgumentException("Invalid video filename");
+        return name;
+    }
     private Uri copyToGallery(File input, String name) throws Exception {
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Video.Media.DISPLAY_NAME, name + ".mp4");
-        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-        values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Daylog");
-        values.put(MediaStore.Video.Media.IS_PENDING, 1);
-        Uri uri = context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-        if (uri == null) throw new IllegalStateException("MediaStore insertion failed");
-        try {
-            try (FileInputStream source = new FileInputStream(input); OutputStream target = context.getContentResolver().openOutputStream(uri)) {
-                if (target == null) throw new IllegalStateException("MediaStore stream unavailable");
-                source.transferTo(target);
+        var resolver=context.getContentResolver();Uri collection=MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        String directory=Environment.DIRECTORY_MOVIES+"/Daylog/",displayName=name+".mp4";
+        ContentValues values=new ContentValues();values.put(MediaStore.Video.Media.DISPLAY_NAME,"daylog-pending-"+java.util.UUID.randomUUID()+".mp4");
+        values.put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");values.put(MediaStore.Video.Media.RELATIVE_PATH,directory);values.put(MediaStore.Video.Media.IS_PENDING,1);
+        Uri uri=resolver.insert(collection,values);if(uri==null)throw new IllegalStateException("MediaStore insertion failed");
+        List<Uri> replaced=new ArrayList<>();
+        try{
+            // Finish the new copy before touching the existing named video.
+            try(FileInputStream source=new FileInputStream(input);OutputStream target=resolver.openOutputStream(uri,"rwt")){
+                if(target==null)throw new IllegalStateException("MediaStore stream unavailable");source.transferTo(target);
             }
-            values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0);
-            context.getContentResolver().update(uri, values, null, null);
-            return uri;
-        } catch (Exception e) { context.getContentResolver().delete(uri, null, null); throw e; }
+            List<Uri> existing=new ArrayList<>();
+            try(android.database.Cursor cursor=resolver.query(collection,new String[]{MediaStore.Video.Media._ID},
+                MediaStore.Video.Media.DISPLAY_NAME+"=? AND "+MediaStore.Video.Media.RELATIVE_PATH+"=? AND "+MediaStore.Video.Media.OWNER_PACKAGE_NAME+"=? AND "+MediaStore.Video.Media.IS_PENDING+"=0",
+                new String[]{displayName,directory,context.getPackageName()},null)){
+                if(cursor!=null)while(cursor.moveToNext())existing.add(android.content.ContentUris.withAppendedId(collection,cursor.getLong(0)));
+            }
+            for(Uri old:existing){
+                values.clear();values.put(MediaStore.Video.Media.DISPLAY_NAME,"daylog-replaced-"+java.util.UUID.randomUUID()+".mp4");values.put(MediaStore.Video.Media.IS_PENDING,1);
+                if(resolver.update(old,values,null,null)!=1)throw new IllegalStateException("Could not replace existing video");replaced.add(old);
+            }
+            values.clear();values.put(MediaStore.Video.Media.DISPLAY_NAME,displayName);values.put(MediaStore.Video.Media.IS_PENDING,0);
+            if(resolver.update(uri,values,null,null)!=1)throw new IllegalStateException("Could not publish video");
+        }catch(Exception e){
+            try{resolver.delete(uri,null,null);}catch(Exception cleanup){e.addSuppressed(cleanup);}
+            for(Uri old:replaced)try{values.clear();values.put(MediaStore.Video.Media.DISPLAY_NAME,displayName);values.put(MediaStore.Video.Media.IS_PENDING,0);resolver.update(old,values,null,null);}catch(Exception restore){e.addSuppressed(restore);}
+            throw e;
+        }
+        for(Uri old:replaced)try{resolver.delete(old,null,null);}catch(Exception cleanup){Log.w("DaylogExport","Could not remove replaced copy",cleanup);}
+        return uri;
     }
 }

@@ -14,7 +14,7 @@ import java.util.UUID;
 /** A private render draft is independent of shared-gallery publication and original recordings. */
 final class MovieDraft {
     final String id;
-    String day,caption,status="editing",error="",savedUri="",sourceSignature="";
+    String day,caption,status="editing",error="",savedUri="",sourceSignature="",fileName="";
     boolean showTime=true,showText=true,showPlace=true,audio=true;
     final List<String> clipIds=new ArrayList<>();
     MovieDraft(String id){if(id==null||!id.matches("[a-f0-9-]{36}"))throw new IllegalArgumentException("Invalid movie identifier");this.id=id;}
@@ -25,12 +25,12 @@ final class MovieDraft {
     private AtomicFile metadata(Context context){return new AtomicFile(new File(directory(context),id+".json"));}
     static MovieDraft load(Context context,String id)throws Exception{
         MovieDraft draft=new MovieDraft(id);JSONObject data=new JSONObject(new String(draft.metadata(context).readFully(),StandardCharsets.UTF_8));
-        draft.sourceSignature=data.optString("sourceSignature");draft.day=data.getString("day");draft.caption=data.optString("caption");draft.status=data.optString("status","editing");draft.error=data.optString("error");draft.savedUri=data.optString("savedUri");
+        draft.fileName=data.optString("fileName");draft.sourceSignature=data.optString("sourceSignature");draft.day=data.getString("day");draft.caption=data.optString("caption");draft.status=data.optString("status","editing");draft.error=data.optString("error");draft.savedUri=data.optString("savedUri");
         draft.showTime=data.optBoolean("showTime",true);draft.showText=data.optBoolean("showText",true);draft.showPlace=data.optBoolean("showPlace",true);draft.audio=data.optBoolean("audio",true);
         JSONArray ids=data.getJSONArray("clips");for(int n=0;n<ids.length();n++){String clip=ids.getString(n);if(!clip.matches("[a-f0-9-]{36}"))throw new IllegalArgumentException("Invalid clip identifier");draft.clipIds.add(clip);}return draft;
     }
     void save(Context context)throws Exception{
-        JSONObject data=new JSONObject().put("sourceSignature",sourceSignature).put("day",day).put("caption",caption).put("status",status).put("error",error).put("savedUri",savedUri).put("showTime",showTime).put("showText",showText).put("showPlace",showPlace).put("audio",audio).put("clips",new JSONArray(clipIds));
+        JSONObject data=new JSONObject().put("fileName",fileName).put("sourceSignature",sourceSignature).put("day",day).put("caption",caption).put("status",status).put("error",error).put("savedUri",savedUri).put("showTime",showTime).put("showText",showText).put("showPlace",showPlace).put("audio",audio).put("clips",new JSONArray(clipIds));
         AtomicFile target=metadata(context);FileOutputStream stream=null;try{stream=target.startWrite();stream.write(data.toString().getBytes(StandardCharsets.UTF_8));target.finishWrite(stream);}catch(Exception e){if(stream!=null)target.failWrite(stream);throw e;}
     }
     static String signature(List<Clip> clips,String day,String caption,boolean showTime){

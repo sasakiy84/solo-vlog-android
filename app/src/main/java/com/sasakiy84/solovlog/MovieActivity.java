@@ -41,7 +41,8 @@ public final class MovieActivity extends ComponentActivity {
     private android.media.MediaPlayer player;
     private CaptionOverlay.Preview captions;
     private TextView state,render,save,open;
-    private LinearLayout settings;
+    private LinearLayout settings,fileNameSection;
+    private EditText fileNameInput;
     private boolean showingResult,saving;
     private String playingSource="";
     private final Runnable poll=new Runnable(){@Override public void run(){refreshState();main.postDelayed(this,500);}};
@@ -60,10 +61,16 @@ public final class MovieActivity extends ComponentActivity {
             }
             if("rendering".equals(draft.status)&&!draft.id.equals(RenderService.activeId)){draft.status="error";draft.error="処理が中断されました。再実行できます。";draft.save(this);}
             if("saving".equals(draft.status)&&!VideoExporter.isSaving(draft.movie(this))){draft.status="ready";draft.save(this);}
+            if(draft.fileName.isBlank()){
+                draft.savedUri="";
+                try{draft.fileName=java.time.LocalDate.parse(draft.day).toString();}
+                catch(java.time.DateTimeException e){Clip first=draft.clips(repository).get(0);draft.fileName=JournalRules.day(first.capturedAt(),getSharedPreferences("daylog",0).getInt("dayStart",240),java.time.ZoneId.of(first.zoneId())).toString();}
+                draft.save(this);
+            }
             renderScreen();
         }catch(Exception e){android.util.Log.e("DaylogMovie","Could not open draft",e);Toast.makeText(this,"動画の下書きを開けませんでした",Toast.LENGTH_LONG).show();finish();}
     }
-    @Override protected void onResume(){super.onResume();if(draft!=null){main.removeCallbacks(poll);main.post(poll);}}
+    @Override protected void onResume(){super.onResume();if(draft!=null){refreshSavedCopy();main.removeCallbacks(poll);main.post(poll);}}
     @Override protected void onStop(){main.removeCallbacks(poll);if(video!=null)video.pause();super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacks(poll);if(video!=null)video.stopPlayback();io.shutdown();if(exporter!=null)exporter.close();super.onDestroy();}
     @Override protected void onSaveInstanceState(Bundle state){if(draft!=null)state.putString("draft_id",draft.id);super.onSaveInstanceState(state);}
@@ -79,6 +86,10 @@ public final class MovieActivity extends ComponentActivity {
         Clip first=draft.clips(repository).get(0);Ui.AspectFrame frame=new Ui.AspectFrame(this,first.landscape());video=new VideoView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));captions=new CaptionOverlay.Preview(this,first,draft.caption,draft.showTime);frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));content.addView(frame,size(-1,getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE?180:280));
         video.setOnPreparedListener(prepared->{player=prepared;prepared.setLooping(true);prepared.setVolume(draft.audio?1:0,draft.audio?1:0);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});captions.startProbing(video,repository.file(first.id()),io);
         state=Ui.text(this,"",14,Ui.MUTED);state.setGravity(Gravity.CENTER);content.addView(state,size(-1,52));
+        fileNameSection=column();LinearLayout.LayoutParams nameParams=size(-1,-2);nameParams.topMargin=dp(12);nameParams.bottomMargin=dp(12);content.addView(fileNameSection,nameParams);
+        fileNameSection.addView(Ui.text(this,"保存名",14,Ui.MUTED),size(-1,-2));
+        LinearLayout nameRow=row();fileNameInput=new EditText(this);fileNameInput.setText(draft.fileName);fileNameInput.setContentDescription("保存名");fileNameInput.setSingleLine(true);fileNameInput.setTextSize(16);fileNameInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);fileNameInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);fileNameInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});nameRow.addView(fileNameInput,new LinearLayout.LayoutParams(0,dp(64),1));TextView extension=Ui.text(this,".mp4",16,Ui.MUTED);extension.setPadding(dp(8),0,dp(8),0);nameRow.addView(extension,size(-2,64));extension.setGravity(Gravity.CENTER_VERTICAL);fileNameSection.addView(nameRow,size(-1,64));controls.add(fileNameInput);
+        fileNameInput.addTextChangedListener(new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){draft.fileName=s.toString();draft.savedUri="";persist();updateUi();}@Override public void afterTextChanged(Editable s){}});
         settings=column();content.addView(settings,size(-1,-2));EditText text=new EditText(this);text.setText(draft.caption);text.setHint("1日のテキスト");text.setContentDescription("1日のテキスト");text.setTextSize(16);text.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);text.setMinLines(3);text.setMaxLines(5);text.setMinHeight(dp(112));text.setGravity(Gravity.TOP|Gravity.START);text.setPadding(dp(12),dp(16),dp(12),dp(16));text.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});LinearLayout.LayoutParams textParams=size(-1,-2);textParams.topMargin=dp(16);textParams.bottomMargin=dp(16);settings.addView(text,textParams);controls.add(text);
         text.addTextChangedListener(new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){draft.caption=s.toString();changed();}@Override public void afterTextChanged(Editable s){}});
         toggle("撮影時刻を表示",draft.showTime,value->{draft.showTime=value;changed();});toggle("クリップのテキストを表示",draft.showText,value->{draft.showText=value;changed();});toggle("場所を表示",draft.showPlace,value->{draft.showPlace=value;changed();});toggle("音声を含める",draft.audio,value->{draft.audio=value;changed();});
@@ -90,15 +101,25 @@ public final class MovieActivity extends ComponentActivity {
     private void changed(){if(player!=null)try{player.setVolume(draft.audio?1:0,draft.audio?1:0);}catch(IllegalStateException e){player=null;}draft.status="editing";draft.error="";draft.savedUri="";persist();updateUi();}
     private boolean persist(){try{draft.save(this);return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
     private void startRender(){if(saving||"rendering".equals(draft.status))return;if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}draft.status="rendering";draft.error="";if(!persist()){draft.status="editing";return;}try{RenderService.activeId=draft.id;ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id));updateUi();}catch(RuntimeException e){RenderService.activeId=null;draft.status="error";draft.error="レンダリングを開始できませんでした";persist();updateUi();}}
+    private void refreshSavedCopy(){
+        if(draft.savedUri.isEmpty())return;
+        try(android.database.Cursor cursor=getContentResolver().query(Uri.parse(draft.savedUri),new String[]{android.provider.MediaStore.Video.Media._ID},null,null,null)){
+            if(cursor==null||!cursor.moveToFirst()){draft.savedUri="";persist();updateUi();}
+        }catch(RuntimeException e){android.util.Log.w("DaylogMovie","Saved copy unavailable",e);draft.savedUri="";persist();updateUi();}
+    }
     private void refreshState(){if(isFinishing())return;try{MovieDraft current=MovieDraft.load(this,draft.id);if(!current.status.equals(draft.status)||!current.savedUri.equals(draft.savedUri)){draft=current;updateUi();}else if("rendering".equals(current.status))updateUi();}catch(Exception e){android.util.Log.w("DaylogMovie","Could not read render state",e);}}
     private void updateUi(){
         if(video==null)return;boolean busy="rendering".equals(draft.status),ready=("ready".equals(draft.status)||"saving".equals(draft.status))&&draft.movie(this).isFile();saving="saving".equals(draft.status);
         for(View control:controls)control.setEnabled(!busy&&!saving);render.setEnabled(!busy&&!saving);render.setAlpha(busy||saving?.45f:1f);render.setText(busy?"レンダリング中":"レンダリング");save.setVisibility(ready?View.VISIBLE:View.GONE);save.setEnabled(!saving&&draft.savedUri.isEmpty());save.setText(saving?"保存中":draft.savedUri.isEmpty()?"保存":"保存済み");open.setVisibility(draft.savedUri.isEmpty()?View.GONE:View.VISIBLE);
+        fileNameSection.setVisibility(ready?View.VISIBLE:View.GONE);
         state.setText(busy?"レンダリング中":ready?(draft.savedUri.isEmpty()?"レンダリング完了":"保存しました"):"error".equals(draft.status)?draft.error:"");
         state.setVisibility(state.getText().length()==0?View.GONE:View.VISIBLE);
         if(ready&&!showingResult){showingResult=true;captions.setVisibility(View.GONE);play(draft.movie(this).getAbsolutePath());video.setMediaController(null);}
         else if(!ready){Clip first=draft.clips(repository).get(0);captions.update(first,draft.caption,draft.showTime);captions.setVisibility(View.VISIBLE);if(showingResult||video.getDuration()<=0){showingResult=false;video.setMediaController(null);play(repository.file(first.id()).getAbsolutePath());}}
     }
-    private void saveToPhone(){if(saving||!"ready".equals(draft.status)||!draft.savedUri.isEmpty())return;saving=true;draft.status="saving";if(!persist()){saving=false;draft.status="ready";return;}updateUi();String name="daylog_"+draft.day+"_"+draft.id.substring(0,8);exporter.saveRendered(draft.movie(this),name,new VideoExporter.Listener(){@Override public void saved(Uri uri){saving=false;draft.status="ready";draft.savedUri=uri.toString();persist();if(!isDestroyed())updateUi();}@Override public void error(String message){saving=false;draft.status="ready";persist();if(!isDestroyed()){updateUi();toast(message);}}});}
+    private void saveToPhone(){if(saving||!"ready".equals(draft.status)||!draft.savedUri.isEmpty())return;String name;
+        try{name=VideoExporter.fileName(draft.fileName);}catch(IllegalArgumentException e){fileNameInput.setError("保存名を確認してください");fileNameInput.requestFocus();return;}
+        if(!name.equals(draft.fileName)){draft.fileName=name;fileNameInput.setText(name);}
+        saving=true;draft.status="saving";if(!persist()){saving=false;draft.status="ready";return;}updateUi();exporter.saveRendered(draft.movie(this),name,new VideoExporter.Listener(){@Override public void saved(Uri uri){saving=false;draft.status="ready";draft.savedUri=uri.toString();persist();if(!isDestroyed())updateUi();}@Override public void error(String message){saving=false;draft.status="ready";persist();if(!isDestroyed()){updateUi();toast(message);}}});}
     private void toast(String message){if(!isDestroyed())Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
 }

@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.2").get()
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.3").get()
 require(Regex("(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})").matches(releaseVersion)) {
     "releaseVersion must be MAJOR.MINOR.PATCH without leading zeros"
 }
