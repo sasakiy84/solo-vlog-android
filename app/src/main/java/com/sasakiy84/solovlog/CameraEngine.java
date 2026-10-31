@@ -11,6 +11,9 @@ import android.util.Log;
 import android.util.Range;
 import android.util.Rational;
 import android.view.Surface;
+import androidx.camera.core.Camera;
+import androidx.camera.core.CameraControl;
+import androidx.camera.core.ZoomState;
 import androidx.camera.core.CameraInfo;
 import androidx.camera.core.DynamicRange;
 import androidx.camera.core.CameraInfoUnavailableException;
@@ -37,6 +40,8 @@ import java.io.File;
 public final class CameraEngine {
     public interface Listener {
         void ready();
+        default void zoomChanged(ZoomState state) {}
+        default void zoomError(String message) {}
         void progress(float fraction, boolean stabilizing);
         void saved(File file, long capturedAt);
         void error(String message);
@@ -47,6 +52,10 @@ public final class CameraEngine {
     private Recorder recorder;
     private String actualQuality,requestedQuality;
     private ProcessCameraProvider provider;
+    private Camera boundCamera;
+    private androidx.lifecycle.Observer<ZoomState> zoomObserver;
+    private float requestedZoom=1;
+    private int zoomRequest;
     private Preview boundPreview;
     private VideoCapture<Recorder> boundVideo;
     private PreviewView preview;
@@ -58,7 +67,7 @@ public final class CameraEngine {
 
     public CameraEngine(Context context,LifecycleOwner owner){this.context=context;this.owner=owner;}
     public void bind(PreviewView target,boolean landscape,Listener listener){
-        if(preview==target&&bound&&horizontal==landscape){listener.ready();return;}
+        if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
         preview=target;horizontal=landscape;bindingListener=listener;
         target.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         target.setScaleType(PreviewView.ScaleType.FILL_CENTER);
@@ -92,14 +101,19 @@ public final class CameraEngine {
                 viewfinder.setSurfaceProvider(target.getSurfaceProvider());
                 VideoCapture<Recorder> video=new VideoCapture.Builder<>(recorder).setTargetRotation(rotation).setTargetFrameRate(new Range<>(30,30)).build();
                 ViewPort viewport=new ViewPort.Builder(new Rational(landscape?16:9,landscape?9:16),rotation).setScaleType(ViewPort.FILL_CENTER).build();
-                provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
-                boundPreview=viewfinder;boundVideo=video;
-                bound=true;listener.ready();
-            }catch(Exception e){Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
+                Camera camera=provider.bindToLifecycle(owner,selector,new UseCaseGroup.Builder().addUseCase(viewfinder).addUseCase(video).setViewPort(viewport).build());
+                boundCamera=camera;boundPreview=viewfinder;boundVideo=video;bound=true;
+                zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(state);};
+                camera.getCameraInfo().getZoomState().observe(owner,zoomObserver);
+                setZoom(requestedZoom);listener.ready();
+            }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
     public void unbind(){preview=null;bound=false;releaseUseCases();}
     private void releaseUseCases(){
+        zoomRequest++;
+        if(boundCamera!=null&&zoomObserver!=null)boundCamera.getCameraInfo().getZoomState().removeObserver(zoomObserver);
+        boundCamera=null;zoomObserver=null;
         // A finishing Activity must never unbind a replacement Activity's camera.
         if(provider!=null&&boundPreview!=null&&boundVideo!=null)provider.unbind(boundPreview,boundVideo);
         boundPreview=null;boundVideo=null;
@@ -109,7 +123,27 @@ public final class CameraEngine {
         CameraSelector next=front?CameraSelector.DEFAULT_BACK_CAMERA:CameraSelector.DEFAULT_FRONT_CAMERA;
         try { if(!provider.hasCamera(next))throw new IllegalStateException("Camera unavailable"); }
         catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
-        front=!front;bound=false;bind(preview,horizontal,bindingListener);
+        front=!front;requestedZoom=1;bound=false;bind(preview,horizontal,bindingListener);
+    }
+    public void setZoom(float ratio){
+        Camera camera=boundCamera;if(camera==null||!bound||!Float.isFinite(ratio))return;
+        ZoomState state=camera.getCameraInfo().getZoomState().getValue();if(state==null)return;
+        requestedZoom=Math.max(state.getMinZoomRatio(),Math.min(state.getMaxZoomRatio(),ratio));
+        if(Math.abs(state.getZoomRatio()-requestedZoom)<.0001f)return;
+        int request=++zoomRequest;var result=camera.getCameraControl().setZoomRatio(requestedZoom);
+        result.addListener(()->{
+            if(request!=zoomRequest||boundCamera!=camera)return;
+            try{result.get();}
+            catch(InterruptedException e){Thread.currentThread().interrupt();}
+            catch(java.util.concurrent.CancellationException e){/* A newer gesture supersedes this request. */}
+            catch(java.util.concurrent.ExecutionException e){
+                if(e.getCause() instanceof CameraControl.OperationCanceledException)return;
+                Log.w("DaylogCamera","Zoom could not be applied",e.getCause());
+                ZoomState current=camera.getCameraInfo().getZoomState().getValue();
+                if(current!=null){requestedZoom=current.getZoomRatio();bindingListener.zoomChanged(current);}
+                bindingListener.zoomError("倍率を変更できませんでした");
+            }
+        },ContextCompat.getMainExecutor(context));
     }
     public String actualQuality(){return context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto").equals(requestedQuality)?actualQuality:null;}
     public boolean busy(){return busy;}

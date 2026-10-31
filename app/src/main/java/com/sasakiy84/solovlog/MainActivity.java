@@ -84,6 +84,7 @@ public final class MainActivity extends ComponentActivity {
     private LinearLayout root;
     private PreviewView preview;
     private Ui.Shutter shutter;
+    private ZoomControls zoomControls;
     private TextView liveLabel,cameraHint,undo;
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
@@ -172,7 +173,7 @@ public final class MainActivity extends ComponentActivity {
         screen=next;render();
     }
     private void render(){
-        cameraReady=false;preview=null;locationIcon=null;if(locations!=null)locations.stop();captureControls.clear();durationChips.clear();if(!camera.busy())camera.unbind();
+        cameraReady=false;preview=null;zoomControls=null;locationIcon=null;if(locations!=null)locations.stop();captureControls.clear();durationChips.clear();if(!camera.busy())camera.unbind();
         root=column();root.setBackgroundColor(Ui.BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{
             Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
@@ -210,19 +211,23 @@ public final class MainActivity extends ComponentActivity {
 
     private void renderCamera(){
         boolean wide=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
+        boolean leftHanded=prefs.getBoolean("leftHanded",false);
         root.setBackgroundColor(Color.BLACK);getWindow().getInsetsController().hide(WindowInsets.Type.systemBars());
         getWindow().getInsetsController().setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         FrameLayout stage=new FrameLayout(this);root.addView(stage,new LinearLayout.LayoutParams(-1,-1));
         preview=new PreviewView(this);preview.setContentDescription("カメラプレビュー");stage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
         if(prefs.getBoolean("grid",true))stage.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
         LinearLayout top=row();top.setPadding(dp(12),dp(12),dp(12),dp(8));
-        liveLabel=bold("準備中",12,Color.WHITE);liveLabel.setPadding(dp(12),dp(8),dp(12),dp(8));liveLabel.setBackground(Ui.rounded(this,0x88000000,18));top.addView(liveLabel,lp(-2,-2));top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        liveLabel=bold("準備中",12,Color.WHITE);liveLabel.setPadding(dp(12),dp(8),dp(12),dp(8));liveLabel.setBackground(Ui.rounded(this,0x88000000,18));
+        if(!leftHanded){top.addView(liveLabel,lp(-2,-2));top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));}
         locationIcon=new Ui.Icon(this,locationEnabled()?"pin":"pin_off",Color.WHITE,"位置情報をオン",this::toggleLocation);
         Ui.Icon audio=new Ui.Icon(this,sound()?"mic":"muted",Color.WHITE,sound()?"音声をオフ":"音声をオン",this::toggleSound);
         Ui.Icon settings=new Ui.Icon(this,"gear",Color.WHITE,"設定",()->navigate(Screen.SETTINGS));
-        for(Ui.Icon control:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);LinearLayout.LayoutParams params=lp(48,48);params.setMarginStart(dp(8));top.addView(control,params);captureControls.add(control);}
+        for(Ui.Icon control:leftHanded?new Ui.Icon[]{settings,audio,locationIcon}:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);LinearLayout.LayoutParams params=lp(48,48);if(leftHanded)params.rightMargin=dp(8);else params.leftMargin=dp(8);top.addView(control,params);captureControls.add(control);}
+        if(leftHanded){top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));top.addView(liveLabel,lp(-2,-2));}
         updateLocationIcon();stage.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
         LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(16),dp(8),dp(16),dp(24));controls.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x00000000,0xB0000000}));
+        zoomControls=new ZoomControls(this,leftHanded,camera::setZoom);controls.addView(zoomControls,lp(-1,-2));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
         for(int duration:new int[]{2,3,5}){
             TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Color.WHITE:0x55000000,22));durationChips.add(chip);
@@ -233,10 +238,10 @@ public final class MainActivity extends ComponentActivity {
         Ui.Icon library=new Ui.Icon(this,"library",Color.WHITE,"日々の記録",()->navigate(Screen.JOURNAL));
         shutter=new Ui.Shutter(this);shutter.white(true);shutter.state(false,0,selectedSeconds);shutter.setOnClickListener(v->{if(captureBusy)stopCapture();else startCapture();});
         Ui.Icon flip=new Ui.Icon(this,"flip",Color.WHITE,"カメラを切り替える",()->{if(!captureBusy)try{camera.flip();}catch(RuntimeException e){toast("このカメラは使えません");}});
-        capture.addView(library,lp(wide?48:64,wide?48:64));LinearLayout.LayoutParams shutterParams=lp(wide?80:88,wide?80:88);shutterParams.setMargins(dp(wide?8:32),0,dp(wide?8:32),0);capture.addView(shutter,shutterParams);capture.addView(flip,lp(wide?48:64,wide?48:64));captureControls.add(library);captureControls.add(flip);controls.addView(capture,lp(-1,100));
+        capture.addView(leftHanded?flip:library,lp(wide?48:64,wide?48:64));LinearLayout.LayoutParams shutterParams=lp(wide?80:88,wide?80:88);shutterParams.setMargins(dp(wide?8:32),0,dp(wide?8:32),0);capture.addView(shutter,shutterParams);capture.addView(leftHanded?library:flip,lp(wide?48:64,wide?48:64));captureControls.add(library);captureControls.add(flip);controls.addView(capture,lp(-1,100));
         cameraHint=text("",12,Color.WHITE);cameraHint.setGravity(Gravity.CENTER);cameraHint.setVisibility(View.GONE);controls.addView(cameraHint,lp(-1,20));
         undo=button("保存しました · 取り消す",false,()->{if(lastSaved!=null&&!captureBusy)try{repository.delete(lastSaved.id());lastSaved=null;undo.setVisibility(View.GONE);}catch(RuntimeException e){toast("取り消せませんでした");}});undo.setVisibility(View.GONE);FrameLayout.LayoutParams undoParams=new FrameLayout.LayoutParams(dp(240),dp(44),Gravity.TOP|Gravity.CENTER_HORIZONTAL);undoParams.topMargin=dp(88);stage.addView(undo,undoParams);
-        if(wide){FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(dp(240),-1,Gravity.END);stage.addView(controls,params);}else stage.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        if(wide){FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(dp(240),-1,leftHanded?Gravity.LEFT:Gravity.RIGHT);stage.addView(controls,params);}else stage.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
         top.setOnApplyWindowInsetsListener((v,insets)->{Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(dp(12)+bars.left,dp(12)+bars.top,dp(12)+bars.right,dp(8));return insets;});
         if(!granted(Manifest.permission.CAMERA)){
             LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,24);prompt.setBackgroundColor(Ui.BG);prompt.addView(bold("カメラへのアクセス",22,Ui.INK));gap(prompt,16);prompt.addView(button("カメラを許可",true,()->requestPermissions(false)),lp(-1,48));stage.addView(prompt,new FrameLayout.LayoutParams(-1,-1));
@@ -245,7 +250,9 @@ public final class MainActivity extends ComponentActivity {
     }
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
-            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
+            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
+            @Override public void zoomChanged(androidx.camera.core.ZoomState state){if(screen==Screen.CAMERA&&zoomControls!=null&&!isDestroyed())zoomControls.update(state);}
+            @Override public void zoomError(String message){if(!isDestroyed())toast(message);}
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
                 shutter.state(true,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
@@ -256,7 +263,7 @@ public final class MainActivity extends ComponentActivity {
             @Override public void error(String message){
                 boolean wasRecording=captureBusy;captureBusy=false;
                 if(!isDestroyed()){
-                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
+                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;if(zoomControls!=null)zoomControls.setAvailable(cameraReady);resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
                     toast(message);
                 }
             }
@@ -316,7 +323,7 @@ public final class MainActivity extends ComponentActivity {
         main.removeCallbacks(resumeAfterRender);
         if(!foreground||screen!=Screen.CAMERA||captureBusy||editorOpen)return;
         if(RenderService.activeId!=null){
-            camera.unbind();cameraReady=false;
+            camera.unbind();cameraReady=false;if(zoomControls!=null)zoomControls.setAvailable(false);
             if(shutter!=null)shutter.setEnabled(false);
             if(liveLabel!=null){liveLabel.setText("処理中");liveLabel.setVisibility(View.VISIBLE);}
             main.postDelayed(resumeAfterRender,500);return;
@@ -565,6 +572,8 @@ public final class MainActivity extends ComponentActivity {
     private void renderSettingsBody(){
         root.removeAllViews();toolbar("設定",()->navigate(settingsReturn),false);
         LinearLayout content=scrollBody();
+        boolean leftHanded=prefs.getBoolean("leftHanded",false);LinearLayout handedness=preferenceRow("利き手",leftHanded?"左利き":"右利き");
+        handedness.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("利き手").setSingleChoiceItems(new String[]{"右利き","左利き"},leftHanded?1:0,(dialog,which)->{prefs.edit().putBoolean("leftHanded",which==1).apply();dialog.dismiss();renderSettingsBody();}).setNegativeButton("キャンセル",null).show());content.addView(handedness);gap(content,1);
         LinearLayout format=preferenceRow("動画の向き",prefs.getBoolean("landscape",false)?"横":"縦");
         format.setContentDescription("動画の向き");
         format.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("動画の向き")
