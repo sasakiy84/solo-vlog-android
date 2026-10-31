@@ -33,8 +33,8 @@ final class MovieDraft {
         JSONObject data=new JSONObject().put("sourceSignature",sourceSignature).put("day",day).put("caption",caption).put("status",status).put("error",error).put("savedUri",savedUri).put("showTime",showTime).put("showText",showText).put("showPlace",showPlace).put("audio",audio).put("clips",new JSONArray(clipIds));
         AtomicFile target=metadata(context);FileOutputStream stream=null;try{stream=target.startWrite();stream.write(data.toString().getBytes(StandardCharsets.UTF_8));target.finishWrite(stream);}catch(Exception e){if(stream!=null)target.failWrite(stream);throw e;}
     }
-    static String signature(List<Clip> clips,String caption,boolean showTime){
-        try{byte[] digest=java.security.MessageDigest.getInstance("SHA-256").digest((clips.toString()+"\n"+caption+"\n"+showTime).getBytes(StandardCharsets.UTF_8));return java.util.HexFormat.of().formatHex(digest);}catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
+    static String signature(List<Clip> clips,String day,String caption,boolean showTime){
+        try{byte[] digest=java.security.MessageDigest.getInstance("SHA-256").digest((clips.toString()+"\n"+day+"\n"+caption+"\n"+showTime).getBytes(StandardCharsets.UTF_8));return java.util.HexFormat.of().formatHex(digest);}catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
     }
     List<Clip> clips(ClipRepository repository){
         List<Clip> all=repository.all(),result=new ArrayList<>();for(String id:clipIds){Clip clip=all.stream().filter(c->c.id().equals(id)).findFirst().orElseThrow(()->new IllegalStateException("元動画が見つかりません"));if(!showText)clip=clip.withCaption("");if(!showPlace)clip=clip.withPlace("");result.add(clip);}return result;

@@ -54,7 +54,7 @@ public final class MovieActivity extends ComponentActivity {
             else{
                 List<String> ids=getIntent().getStringArrayListExtra("clips");if(ids==null||ids.isEmpty())throw new IllegalArgumentException("No clips");
                 var prefs=getSharedPreferences("daylog",0);MovieDraft created=MovieDraft.create(getIntent().getStringExtra("day"),ids,getIntent().getStringExtra("caption"),prefs.getBoolean("showTime",true));
-                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.caption,created.showTime);
+                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime);
                 String previous=prefs.getString("movieDraft:"+created.sourceSignature,null);draft=created;
                 if(previous!=null)try{draft=MovieDraft.load(this,previous);}catch(Exception e){android.util.Log.w("DaylogMovie","Previous draft unavailable",e);}
                 draft.save(this);prefs.edit().putString("movieDraft:"+created.sourceSignature,draft.id).apply();
