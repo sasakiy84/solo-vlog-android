@@ -68,7 +68,7 @@ public final class MainActivity extends ComponentActivity {
     private SharedPreferences prefs;
     private ClipRepository repository;
     private CameraEngine camera;
-    private VideoExporter exporter;
+    private NotificationAccess notificationAccess;
     private LocationTracker locations;
     private PlaceResolver places;
     private Ui.Icon locationIcon;
@@ -81,10 +81,10 @@ public final class MainActivity extends ComponentActivity {
     private LinearLayout root;
     private PreviewView preview;
     private Ui.Shutter shutter;
-    private TextView liveLabel,cameraCount,cameraHint,undo;
+    private TextView liveLabel,cameraHint,undo;
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
-    private boolean captureBusy,cameraReady,exporting;
+    private boolean captureBusy,cameraReady;
     private int selectedSeconds=3;
     private LocalDate selectedDay;
     private boolean journalLandscape;
@@ -106,8 +106,9 @@ public final class MainActivity extends ComponentActivity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         prefs=getSharedPreferences("daylog",MODE_PRIVATE);
-        repository=ClipRepository.get(this);camera=new CameraEngine(this,this);exporter=new VideoExporter(this);
-        places=new PlaceResolver(this);locations=new LocationTracker(this,this::updateLocationIcon);
+        repository=ClipRepository.get(this);camera=new CameraEngine(this,this);
+        AppNotifications.channels(this);notificationAccess=new NotificationAccess(this,()->{if(screen==Screen.SETTINGS)renderSettingsBody();});
+        places=new PlaceResolver(this);locations=new LocationTracker(this,()->{updateLocationIcon();android.location.Location fix=locations.snapshot();if(fix!=null){GeoPoint point=LocationTracker.point(fix);if(point!=null)places.resolve(point,names->{});}});
         selectedSeconds=prefs.getInt("seconds",3);
         if(selectedSeconds!=2&&selectedSeconds!=3&&selectedSeconds!=5)selectedSeconds=3;
         journalLandscape=landscape();selectedDay=today();
@@ -126,12 +127,14 @@ public final class MainActivity extends ComponentActivity {
                 else{setEnabled(false);getOnBackPressedDispatcher().onBackPressed();}
             }
         });
-        render();
+        readReviewIntent(getIntent());render();
     }
-    @Override protected void onResume(){super.onResume();foreground=true;
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(captureBusy)return;readReviewIntent(intent);render();if(intent.getBooleanExtra("edits_saved",false))toast("保存しました");}
+    private void readReviewIntent(Intent intent){if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}String day=intent.getStringExtra("review_day");if(day!=null){try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}}else if(intent.getBooleanExtra("review_today",false)){selectedDay=today();screen=Screen.JOURNAL;}}
+    @Override protected void onResume(){super.onResume();foreground=true;AppNotifications.scheduleReminder(this);
         if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
-        if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();if(cameraCount!=null)cameraCount.setText(cameraSummary());updateLocationIcon();resumeCamera();}
+        if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
     }
     @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
@@ -151,7 +154,7 @@ public final class MainActivity extends ComponentActivity {
     private String seconds(long millis){return String.format(Locale.JAPAN,"%.1f",millis/1000f).replace(".0","");}
     private void applyOrientation(){setRequestedOrientation(landscape()?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);}
     private void navigate(Screen next){
-        if(captureBusy||exporting)return;
+        if(captureBusy)return;
         if(next==Screen.SETTINGS)settingsReturn=screen;
         if(next==Screen.JOURNAL&&screen==Screen.CAMERA){selectedDay=today();journalLandscape=landscape();}
         if(next==Screen.CAMERA)applyOrientation();
@@ -162,9 +165,10 @@ public final class MainActivity extends ComponentActivity {
         root=column();root.setBackgroundColor(Ui.BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{
             Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
-            v.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;
+            v.setPadding(screen==Screen.CAMERA?0:bars.left,screen==Screen.CAMERA?0:bars.top,screen==Screen.CAMERA?0:bars.right,screen==Screen.CAMERA?0:bars.bottom);return insets;
         });
         setContentView(root);root.requestApplyInsets();
+        if(screen!=Screen.CAMERA)getWindow().getInsetsController().show(WindowInsets.Type.systemBars());
         if(screen==Screen.CAMERA)renderCamera();else if(screen==Screen.JOURNAL)renderJournal();else renderSettingsBody();
     }
     private LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
@@ -195,66 +199,53 @@ public final class MainActivity extends ComponentActivity {
 
     private void renderCamera(){
         boolean wide=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
-        LinearLayout bar=toolbar("daylog",null,true);cameraCount=text(cameraSummary(),12,Ui.MUTED);bar.addView(cameraCount,1,lp(-2,-2));
-        LinearLayout body=wide?row():column();root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
-        FrameLayout stage=new FrameLayout(this);
-        LinearLayout.LayoutParams stageParams=wide?new LinearLayout.LayoutParams(0,-1,1):new LinearLayout.LayoutParams(-1,0,1);
-        stageParams.setMargins(dp(20),dp(wide?4:10),dp(wide?0:20),dp(8));body.addView(stage,stageParams);
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,landscape());frame.setBackground(Ui.rounded(this,Ui.CARD,12));frame.setClipToOutline(true);
-        stage.addView(frame,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        preview=new PreviewView(this);frame.addView(preview,new FrameLayout.LayoutParams(-1,-1));
-        if(prefs.getBoolean("grid",true))frame.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout overlay=row();overlay.setPadding(dp(16),dp(8),dp(8),dp(8));
-        liveLabel=bold("準備中",11,Color.WHITE);liveLabel.setGravity(Gravity.CENTER_VERTICAL);
-        liveLabel.setPadding(dp(10),0,dp(10),0);liveLabel.setBackground(Ui.rounded(this,0x99000000,16));overlay.addView(liveLabel,lp(-2,32));overlay.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        root.setBackgroundColor(Color.BLACK);getWindow().getInsetsController().hide(WindowInsets.Type.systemBars());
+        getWindow().getInsetsController().setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        FrameLayout stage=new FrameLayout(this);root.addView(stage,new LinearLayout.LayoutParams(-1,-1));
+        preview=new PreviewView(this);preview.setContentDescription("カメラプレビュー");stage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
+        if(prefs.getBoolean("grid",true))stage.addView(new Ui.Grid(this),new FrameLayout.LayoutParams(-1,-1));
+        LinearLayout top=row();top.setPadding(dp(12),dp(12),dp(12),dp(8));
+        liveLabel=bold("準備中",12,Color.WHITE);liveLabel.setPadding(dp(12),dp(8),dp(12),dp(8));liveLabel.setBackground(Ui.rounded(this,0x88000000,18));top.addView(liveLabel,lp(-2,-2));top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        locationIcon=new Ui.Icon(this,locationEnabled()?"pin":"pin_off",Color.WHITE,"位置情報をオン",this::toggleLocation);
         Ui.Icon audio=new Ui.Icon(this,sound()?"mic":"muted",Color.WHITE,sound()?"音声をオフ":"音声をオン",this::toggleSound);
-        locationIcon=new Ui.Icon(this,locationEnabled()?"pin":"pin_off",Color.WHITE,"位置情報をオン",this::toggleLocation);Ui.touch(locationIcon,0x99000000,24);overlay.addView(locationIcon,lp(48,48));captureControls.add(locationIcon);updateLocationIcon();
-        Ui.touch(audio,0x99000000,24);overlay.addView(audio,lp(48,48));captureControls.add(audio);frame.addView(overlay,new FrameLayout.LayoutParams(-1,dp(64),Gravity.TOP));
-        if(!granted(Manifest.permission.CAMERA)){
-            LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,22);prompt.setBackgroundColor(Ui.BG);
-            prompt.addView(bold("カメラへのアクセス",24,Ui.INK));gap(prompt,12);
-            TextView explanation=text("撮影するにはカメラを許可してください。",13,Ui.MUTED);explanation.setGravity(Gravity.CENTER);prompt.addView(explanation);gap(prompt,24);
-            prompt.addView(button("カメラを許可",true,()->requestPermissions(false)),lp(-1,-2));frame.addView(prompt,new FrameLayout.LayoutParams(-1,-1));
-        }
-        LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(12),dp(4),dp(12),dp(8));body.addView(controls,wide?lp(190,-1):lp(-1,-2));
-
+        Ui.Icon settings=new Ui.Icon(this,"gear",Color.WHITE,"設定",()->navigate(Screen.SETTINGS));
+        for(Ui.Icon control:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);top.addView(control,lp(48,48));captureControls.add(control);}
+        updateLocationIcon();stage.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
+        LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(16),dp(8),dp(16),dp(24));controls.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x00000000,0xB0000000}));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
         for(int duration:new int[]{2,3,5}){
-            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.BG:Ui.MUTED);chip.setGravity(Gravity.CENTER);
-            chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Ui.ACCENT:Ui.CARD,22));chip.setSelected(duration==selectedSeconds);chip.setContentDescription(duration+"秒を選択");chip.setFocusable(true);chip.setTag(duration);durationChips.add(chip);
-            LinearLayout.LayoutParams params=lp(wide?48:70,48);params.setMargins(dp(4),0,dp(4),0);lengths.addView(chip,params);
-            chip.setOnClickListener(v->{if(!captureBusy){selectedSeconds=duration;prefs.edit().putInt("seconds",duration).apply();resetCaptureControls();}});captureControls.add(chip);
+            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Color.WHITE:0x55000000,22));durationChips.add(chip);
+            LinearLayout.LayoutParams params=lp(wide?48:64,44);params.setMargins(dp(4),0,dp(4),0);lengths.addView(chip,params);chip.setOnClickListener(v->{if(!captureBusy){selectedSeconds=duration;prefs.edit().putInt("seconds",duration).apply();resetCaptureControls();}});captureControls.add(chip);
         }
-        controls.addView(lengths,lp(-1,52));gap(controls,wide?6:8);
+        controls.addView(lengths,lp(-1,48));
         LinearLayout capture=row();capture.setGravity(Gravity.CENTER);
-        Ui.Icon library=icon("library","日々の記録",()->navigate(Screen.JOURNAL));
-        shutter=new Ui.Shutter(this);shutter.state(false,0,selectedSeconds);shutter.setOnClickListener(v->{if(captureBusy)stopCapture();else startCapture();});
-        Ui.Icon flip=icon("flip","カメラを切り替える",()->{if(!captureBusy)try{camera.flip();}catch(RuntimeException e){toast("このカメラは使えません");}});
-        if(!wide)capture.addView(library,lp(64,64));
-        LinearLayout.LayoutParams shutterParams=lp(88,88);if(!wide)shutterParams.setMargins(dp(32),0,dp(32),0);capture.addView(shutter,shutterParams);
-        if(!wide)capture.addView(flip,lp(64,64));controls.addView(capture,lp(-1,92));captureControls.add(library);captureControls.add(flip);
-        if(wide){LinearLayout side=row();side.setGravity(Gravity.CENTER);side.addView(library,lp(64,48));side.addView(flip,lp(64,48));controls.addView(side);}
-        cameraHint=text("",11,Ui.MUTED);cameraHint.setGravity(Gravity.CENTER);controls.addView(cameraHint,lp(-1,20));
-        undo=button("",false,()->{
-            if(lastSaved!=null&&!captureBusy)try{repository.delete(lastSaved.id());lastSaved=null;undo.setVisibility(View.GONE);cameraCount.setText(cameraSummary());}catch(RuntimeException e){toast("取り消せませんでした");}
-        });undo.setVisibility(View.GONE);controls.addView(undo,lp(-1,44));
+        Ui.Icon library=new Ui.Icon(this,"library",Color.WHITE,"日々の記録",()->navigate(Screen.JOURNAL));
+        shutter=new Ui.Shutter(this);shutter.white(true);shutter.state(false,0,selectedSeconds);shutter.setOnClickListener(v->{if(captureBusy)stopCapture();else startCapture();});
+        Ui.Icon flip=new Ui.Icon(this,"flip",Color.WHITE,"カメラを切り替える",()->{if(!captureBusy)try{camera.flip();}catch(RuntimeException e){toast("このカメラは使えません");}});
+        capture.addView(library,lp(wide?48:64,wide?48:64));LinearLayout.LayoutParams shutterParams=lp(wide?80:88,wide?80:88);shutterParams.setMargins(dp(wide?8:32),0,dp(wide?8:32),0);capture.addView(shutter,shutterParams);capture.addView(flip,lp(wide?48:64,wide?48:64));captureControls.add(library);captureControls.add(flip);controls.addView(capture,lp(-1,100));
+        cameraHint=text("",12,Color.WHITE);cameraHint.setGravity(Gravity.CENTER);cameraHint.setVisibility(View.GONE);controls.addView(cameraHint,lp(-1,20));
+        undo=button("保存しました · 取り消す",false,()->{if(lastSaved!=null&&!captureBusy)try{repository.delete(lastSaved.id());lastSaved=null;undo.setVisibility(View.GONE);}catch(RuntimeException e){toast("取り消せませんでした");}});undo.setVisibility(View.GONE);FrameLayout.LayoutParams undoParams=new FrameLayout.LayoutParams(dp(240),dp(44),Gravity.TOP|Gravity.CENTER_HORIZONTAL);undoParams.topMargin=dp(88);stage.addView(undo,undoParams);
+        if(wide){FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(dp(240),-1,Gravity.END);stage.addView(controls,params);}else stage.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        top.setOnApplyWindowInsetsListener((v,insets)->{Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(dp(12)+bars.left,dp(12)+bars.top,dp(12)+bars.right,dp(8));return insets;});
+        if(!granted(Manifest.permission.CAMERA)){
+            LinearLayout prompt=column();prompt.setGravity(Gravity.CENTER);padded(prompt,24);prompt.setBackgroundColor(Ui.BG);prompt.addView(bold("カメラへのアクセス",22,Ui.INK));gap(prompt,16);prompt.addView(button("カメラを許可",true,()->requestPermissions(false)),lp(-1,48));stage.addView(prompt,new FrameLayout.LayoutParams(-1,-1));
+        }
         shutter.setEnabled(false);preview.post(this::resumeCamera);
     }
-    private String cameraSummary(){List<Clip> list=clips(today(),landscape(),false);return today().format(DateTimeFormatter.ofPattern("MM.dd"))+"  ·  "+list.size()+"本";}
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
             @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(shutter!=null)shutter.setEnabled(true);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
                 shutter.state(true,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
-                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"録画中  "+String.format(Locale.US,"%02d",Math.max(1,(int)Math.ceil(selectedSeconds*(1-fraction)))));
+                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"録画中");
                 liveLabel.setTextColor(Color.WHITE);
             }
             @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
             @Override public void error(String message){
                 boolean wasRecording=captureBusy;captureBusy=false;
                 if(!isDestroyed()){
-                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");}
+                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
                     toast(message);
                 }
             }
@@ -272,8 +263,8 @@ public final class MainActivity extends ComponentActivity {
     private void resetCaptureControls(){
         for(View view:captureControls)view.setEnabled(true);
         shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"撮影できます":"準備中");liveLabel.setTextColor(Color.WHITE);liveLabel.setVisibility(cameraReady?View.INVISIBLE:View.VISIBLE);
-        cameraHint.setText("");cameraCount.setText(cameraSummary());
-        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.BG:Ui.MUTED);chip.setBackground(Ui.rounded(this,selected?Ui.ACCENT:Ui.CARD,22));}
+        cameraHint.setText("");cameraHint.setVisibility(View.GONE);
+        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Color.WHITE:0x55000000,22));}
     }
     private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
@@ -306,7 +297,7 @@ public final class MainActivity extends ComponentActivity {
             }catch(Exception e){main.post(()->{captureBusy=false;if(!isDestroyed()){render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
         });
     }
-    private boolean locationEnabled(){return prefs.getBoolean("location",false)&&locations.granted();}
+    private boolean locationEnabled(){return prefs.getBoolean("location",true)&&locations.granted();}
     private void resumeCamera(){
         if(foreground&&screen==Screen.CAMERA&&!captureBusy&&!editorOpen){bindCamera();if(locationEnabled())locations.start();}
     }
@@ -399,7 +390,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout summary=row();
         TextView count=bold(selected.size()+"本 · "+seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView save=button("動画を保存","download",true,()->export(selected,selectedDay.toString(),journalLandscape));
+        TextView save=button("動画を調整","edit",true,()->export(selected,selectedDay.toString(),journalLandscape));
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
@@ -502,7 +493,7 @@ public final class MainActivity extends ComponentActivity {
         ScrollView scroll=new ScrollView(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(clipTime(clip)+"  /  "+seconds(JournalRules.exportDuration(clip))+"秒").setView(scroll)
             .setPositiveButton("閉じる",null).setNeutralButton("削除",null).create();
-        TextView saveVideo=button("このクリップを保存","download",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
+        TextView saveVideo=button("動画を調整","edit",true,()->{save.run();leavingForExport[0]=true;dialog.dismiss();export(List.of(edited[0]),"clip",clip.landscape());});
         java.util.function.Consumer<String> selectPlace=name->{edited[0]=edited[0].withPlace(edited[0].place().equals(name)?"":name);repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices[0].run();};
         refreshChoices[0]=()->{
             choices.removeAllViews();java.util.LinkedHashSet<String> names=new java.util.LinkedHashSet<>();
@@ -539,18 +530,10 @@ public final class MainActivity extends ComponentActivity {
         dialog.show();focusEditor(input,dialog);
     }
     private void export(List<Clip> selected,String day,boolean horizontal){
-        if(exporting)return;if(selected.isEmpty()){toast("クリップを選択してください");return;}exporting=true;
-        LinearLayout content=column();padded(content,24);content.setGravity(Gravity.CENTER);content.addView(new ProgressBar(this),lp(48,48));gap(content,16);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("動画を保存中").setView(content).setCancelable(false).create();dialog.show();
-        String name="daylog_"+day+"_"+(horizontal?"landscape":"portrait")+"_"+LocalTime.now().format(DateTimeFormatter.ofPattern("HHmmss"));
+        if(selected.isEmpty()){toast("クリップを選択してください");return;}
         String captionDay=JournalRules.day(selected.get(0).capturedAt(),boundary(),ZoneId.of(selected.get(0).zoneId())).toString();
-        exporter.export(selected,repository,name,repository.dayCaption(captionDay),prefs.getBoolean("showTime",true),new VideoExporter.Listener(){
-            @Override public void saved(Uri uri){
-                exporting=false;if(isDestroyed())return;dialog.dismiss();AlertDialog savedDialog=new AlertDialog.Builder(MainActivity.this).setTitle("保存しました").setMessage("Movies / Daylog に保存しました。")
-                    .setPositiveButton("開く",(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(RuntimeException e){toast("ギャラリーから動画を開けます");}}).setNegativeButton("閉じる",null).create();savedDialog.setOnDismissListener(d->resumeCamera());savedDialog.show();
-            }
-            @Override public void error(String message){exporting=false;if(!isDestroyed()){dialog.dismiss();toast(message);resumeCamera();}}
-        });
+        camera.unbind();locations.stop();
+        startActivity(new Intent(this,MovieActivity.class).putStringArrayListExtra("clips",new ArrayList<>(selected.stream().map(Clip::id).toList())).putExtra("day",captionDay).putExtra("caption",repository.dayCaption(captionDay)));
     }
 
     private void renderSettingsBody(){
@@ -574,8 +557,12 @@ public final class MainActivity extends ComponentActivity {
         content.addView(settingToggle("撮影時刻を表示",prefs.getBoolean("showTime",true),()->{prefs.edit().putBoolean("showTime",!prefs.getBoolean("showTime",true)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("音声",sound(),this::toggleSound));gap(content,1);
         content.addView(settingToggle("グリッド",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,32);
+        content.addView(settingToggle("撮影リマインダー（1時間ごと）",prefs.getBoolean("hourlyReminder",false)&&AppNotifications.allowed(this),()->{
+            if(prefs.getBoolean("hourlyReminder",false)&&AppNotifications.allowed(this)){prefs.edit().putBoolean("hourlyReminder",false).apply();AppNotifications.scheduleReminder(this);renderSettingsBody();}
+            else notificationAccess.request(()->{prefs.edit().putBoolean("hourlyReminder",true).putLong("nextCaptureReminder",System.currentTimeMillis()+60*60*1000L).apply();AppNotifications.scheduleReminder(this);renderSettingsBody();});
+        }));gap(content,24);
         content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);
-        content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",repository.bytes()/1048576f),14,Ui.MUTED));gap(content,12);
+        content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",(repository.bytes()+MovieDraft.bytes(this))/1048576f),14,Ui.MUTED));gap(content,12);
         content.addView(text("アプリを削除すると、書き出していない動画も削除されます。",12,Ui.MUTED));
     }
     private LinearLayout preferenceRow(String title,String value){

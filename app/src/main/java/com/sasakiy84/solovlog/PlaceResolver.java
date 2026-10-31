@@ -17,15 +17,16 @@ import java.util.function.Consumer;
 final class PlaceResolver {
     private final Context context;
     private final Handler main=new Handler(Looper.getMainLooper());
-    private final Map<String,List<String>> cache=new HashMap<>();
-    private final Map<String,List<Consumer<List<String>>>> pending=new HashMap<>();
+    private static final Map<String,List<String>> cache=new java.util.LinkedHashMap<>();
+    private static final Map<String,List<Consumer<List<String>>>> pending=new HashMap<>();
     PlaceResolver(Context context){this.context=context.getApplicationContext();}
     void resolve(GeoPoint point,Consumer<List<String>> callback){
         String key=String.format(Locale.ROOT,"%.4f,%.4f",point.latitude(),point.longitude());
         if(cache.containsKey(key)){callback.accept(cache.get(key));return;}
         if(!Geocoder.isPresent()){callback.accept(List.of());return;}
         if(pending.containsKey(key)){pending.get(key).add(callback);return;}
-        pending.put(key,new ArrayList<>(List.of(callback)));
+        List<Consumer<List<String>>> callbacks=new ArrayList<>(List.of(callback));pending.put(key,callbacks);
+        main.postDelayed(()->{if(pending.get(key)==callbacks)finish(key,List.of());},8000);
         try{
             new Geocoder(context,Locale.JAPAN).getFromLocation(point.latitude(),point.longitude(),1,new Geocoder.GeocodeListener(){
                 @Override public void onGeocode(List<Address> addresses){
@@ -40,7 +41,7 @@ final class PlaceResolver {
         }catch(IllegalArgumentException|IllegalStateException|SecurityException e){android.util.Log.w("DaylogPlaces","Address lookup unavailable",e);finish(key,List.of());}
     }
     private void finish(String key,List<String> names){main.post(()->{
-        if(!names.isEmpty())cache.put(key,names);
+        if(!names.isEmpty()){if(cache.size()>=64)cache.remove(cache.keySet().iterator().next());cache.put(key,names);}
         List<Consumer<List<String>>> callbacks=pending.remove(key);if(callbacks!=null)for(var callback:callbacks)callback.accept(names);
     });}
 }

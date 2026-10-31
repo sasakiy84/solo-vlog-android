@@ -137,7 +137,7 @@ final class CaptionOverlay implements GlEffect {
         void startProbing(VideoView video,File source,ExecutorService io){
             probe=new Runnable(){@Override public void run(){
                 if(!isAttachedToWindow()||io.isShutdown())return;
-                if(!pending&&(showTime||!day.isBlank()||!clip.caption().isBlank()||!clip.place().isBlank())){
+                if(!pending&&getVisibility()==VISIBLE&&getWindowVisibility()==VISIBLE&&(showTime||!day.isBlank()||!clip.caption().isBlank()||!clip.place().isBlank())){
                     pending=true;long position=video.getCurrentPosition()*1000L;
                     io.execute(()->{
                         Bitmap frame=null;

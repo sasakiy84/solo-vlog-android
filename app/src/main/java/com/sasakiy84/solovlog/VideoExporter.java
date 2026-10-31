@@ -31,13 +31,17 @@ import java.util.concurrent.Executors;
 @UnstableApi
 public final class VideoExporter {
     public interface Listener { void saved(Uri uri); void error(String message); }
+    public interface RenderListener { void rendered(File file); void error(String message); }
     private final Context context;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private Transformer transformer;
+    private File currentOutput;
+    private static final java.util.Set<String> SAVING=java.util.concurrent.ConcurrentHashMap.newKeySet();
+    static boolean isSaving(File file){return SAVING.contains(file.getAbsolutePath());}
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
 
-    public void export(List<Clip> clips, ClipRepository repository, String name, String dayCaption, boolean showTime, Listener listener) {
+    public void render(List<Clip> clips, ClipRepository repository, String dayCaption, boolean showTime, boolean includeAudio, RenderListener listener) {
         if (clips.isEmpty()) { listener.error("保存するクリップを選んでください。"); return; }
         if (transformer != null) { listener.error("現在の保存が終わるまでお待ちください。"); return; }
         List<EditedMediaItem> items = new ArrayList<>();
@@ -45,7 +49,7 @@ public final class VideoExporter {
             if (!repository.file(clip.id()).isFile()) { listener.error("元のクリップが見つかりません。"); return; }
             MediaItem item = new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(JournalRules.exportDuration(clip)).build()).build();
-            EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item);
+            EditedMediaItem.Builder edited=new EditedMediaItem.Builder(item).setRemoveAudio(!includeAudio);
             if(!dayCaption.isBlank()||showTime||!clip.caption().isBlank()||!clip.place().isBlank())
                 edited.setEffects(new Effects(List.of(),List.of(new CaptionOverlay(clip,dayCaption,showTime))));
             items.add(edited.build());
@@ -55,26 +59,31 @@ public final class VideoExporter {
         File output;
         try { output = File.createTempFile("daylog-export-", ".mp4", context.getCacheDir()); output.delete(); }
         catch (Exception e) { listener.error("書き出し用の空き容量を確保できませんでした。"); return; }
+        currentOutput=output;
         transformer = new Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build())
             .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips)))
             .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(Composition result, ExportResult exportResult) {
                     transformer = null;
-                    io.execute(() -> {
-                        try { Uri uri = copyToGallery(output, name); main.post(() -> listener.saved(uri)); }
-                        catch (Exception e) { main.post(() -> listener.error("ギャラリーに保存できませんでした。空き容量を確認してください。")); }
-                        finally { output.delete(); }
-                    });
+                    currentOutput=null;listener.rendered(output);
                 }
                 @Override public void onError(Composition result, ExportResult exportResult, ExportException exception) {
                     Log.e("DaylogExport", "Video export failed", exception);
-                    transformer = null; output.delete(); listener.error("動画をまとめられませんでした。元のクリップは残っています。");
+                    transformer = null; currentOutput=null;output.delete(); listener.error("動画をまとめられませんでした。元のクリップは残っています。");
                 }
             }).build();
         try { transformer.start(composition, output.getAbsolutePath()); }
-        catch (RuntimeException e) { transformer = null; output.delete(); listener.error("書き出しを始められませんでした。元のクリップは残っています。"); }
+        catch (RuntimeException e) { transformer = null; currentOutput=null;output.delete(); listener.error("書き出しを始められませんでした。元のクリップは残っています。"); }
     }
+
+    public void saveRendered(File file,String name,Listener listener){
+        String path=file.getAbsolutePath();if(!SAVING.add(path))return;
+        io.execute(()->{try{Uri uri=copyToGallery(file,name);main.post(()->{try{listener.saved(uri);}finally{SAVING.remove(path);}});}catch(Exception e){Log.e("DaylogExport","Gallery save failed",e);main.post(()->{try{listener.error("保存できませんでした。レンダリング済み動画は残っています。");}finally{SAVING.remove(path);}});}});
+    }
+    public int progress(){if(transformer==null)return 0;androidx.media3.transformer.ProgressHolder holder=new androidx.media3.transformer.ProgressHolder();return transformer.getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE?holder.progress:-1;}
+    public void cancel(){if(transformer!=null){transformer.cancel();transformer=null;}if(currentOutput!=null){currentOutput.delete();currentOutput=null;}}
+    public void close(){cancel();io.shutdown();}
 
     private Uri copyToGallery(File input, String name) throws Exception {
         ContentValues values = new ContentValues();

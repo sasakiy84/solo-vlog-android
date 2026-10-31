@@ -71,7 +71,7 @@ public final class ClipRepository extends SQLiteOpenHelper {
     public synchronized void location(String id,GeoPoint point) throws Exception{
         try(Cursor c=getReadableDatabase().query("clips",new String[]{"id"},"id=?",new String[]{id},null,null,null)){if(!c.moveToFirst())return;}
         ClipGeotagWriter.write(file(id),point);
-        ContentValues values=new ContentValues();values.put("latitude",point.latitude());values.put("longitude",point.longitude());values.put("accuracy",point.accuracyMeters());
+        ContentValues values=new ContentValues();values.put("latitude",point.latitude());values.put("longitude",point.longitude());values.put("accuracy",point.accuracyMeters());values.put("location_names","");
         getWritableDatabase().update("clips",values,"id=?",new String[]{id});
     }
     public java.util.List<String> placeCandidates(String id){

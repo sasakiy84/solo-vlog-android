@@ -75,7 +75,8 @@ public final class LocationJourneyTest {
             assertThat(c).isNotNull();assertThat(c.moveToFirst()).isTrue();return Uri.withAppendedPath(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,c.getString(0));
         }
     }
-    private void saved(){assertThat(device.wait(Until.hasObject(By.text("保存しました")),180000)).isTrue();}
+    private int saves;
+    private void saved()throws Exception{MovieJourney.renderAndSave(context,device,false,++saves==1?"single":"trip");}
     private void place(String value){click(By.desc("場所を入力"));find(By.desc("場所")).setText(value);click(By.res("android","button1"));}
     private void selectPlace(String name){
         BySelector selector=By.desc("場所を表示 "+name);
@@ -140,20 +141,20 @@ public final class LocationJourneyTest {
             }
             selectPlace(clip(first.id()).location().label());await(()->!clip(first.id()).place().isEmpty());
             place("東京駅");await(()->clip(first.id()).place().equals("東京駅"));DeviceImages.screenshot(context,device,"10-post-capture-editor");
-            click(By.text("次を撮る"));click(By.desc("日々の記録"));click(By.descStartsWith("クリップを再生 "));click(By.text("このクリップを保存"));saved();
+            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"10a-edits-saved-journal");click(By.descStartsWith("クリップを再生 "));click(By.text("動画を調整"));saved();
             Uri individual=latestVideo();
             try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){
                 metadata.setDataSource(context,individual);assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)).isNotNull();
             }
-            click(By.res("android","button2"));click(By.desc("前の画面に戻る"));
+            click(By.desc("一覧に戻る"));click(By.desc("前の画面に戻る"));
             mockFix(manager,35.681246,139.767135);
-            Clip second=record(3);await(()->clip(second.id()).location()!=null);click(By.desc("場所を表示 東京駅"));
+            Clip second=record(3);await(()->clip(second.id()).location()!=null);assertThat(device.hasObject(By.text("現在地を追加"))).isFalse();click(By.desc("場所を表示 東京駅"));
             find(By.desc("クリップのテキスト")).setText("コーヒー休憩");await(()->clip(second.id()).place().equals("東京駅")&&clip(second.id()).caption().equals("コーヒー休憩"));
-            DeviceImages.screenshot(context,device,"11-one-tap-place");click(By.text("次を撮る"));
+            DeviceImages.screenshot(context,device,"11-one-tap-place");click(By.text("保存"));find(By.text("日々の記録"));click(By.text("撮影する"));
             mockFix(manager,34.985849,135.758767);
             Clip third=record(2);await(()->clip(third.id()).location()!=null);assertThat(clip(third.id()).location().distanceMeters(clip(first.id()).location())).isGreaterThan(300000);
             assertThat(device.hasObject(By.desc("場所を表示 東京駅"))).isFalse();place("京都駅");find(By.desc("クリップのテキスト")).setText("京都に到着");await(()->clip(third.id()).caption().equals("京都に到着"));
-            click(By.text("次を撮る"));click(By.desc("日々の記録"));click(By.text("動画を保存"));saved();Uri daily=latestVideo();
+            click(By.text("保存"));find(By.text("日々の記録"));DeviceImages.screenshot(context,device,"11a-trip-journal");click(By.text("動画を調整"));saved();Uri daily=latestVideo();
             List<Clip> trip=List.of(clip(first.id()),clip(second.id()),clip(third.id()));
             try(InputStream input=context.getContentResolver().openInputStream(daily)){
                 assertThat(input).isNotNull();String container=new String(input.readAllBytes(),StandardCharsets.UTF_8);
@@ -165,10 +166,10 @@ public final class LocationJourneyTest {
                 for(int n=0;n<2;n++){Bitmap frame=metadata.getFrameAtTime(n==0?1000000:5800000,MediaMetadataRetriever.OPTION_CLOSEST);assertThat(frame).isNotNull();DeviceImages.bitmap(context,frame,"12-location-export-"+(n+1));frame.recycle();}
             }
             DeviceImages.screenshot(context,device,"13-travel-saved");
-            click(By.res("android","button2"));click(By.desc("前の画面に戻る"));
+            click(By.desc("一覧に戻る"));click(By.desc("前の画面に戻る"));
             int countBefore=repository.all().size();Clip removed=record(2);click(By.text("削除"));click(By.res("android","button1"));
             await(()->repository.all().size()==countBefore);assertThat(repository.file(removed.id()).exists()).isFalse();
-            find(By.text(Pattern.compile("\\d{2}\\.\\d{2}.*3本")));
+            find(By.desc("カメラプレビュー"));
         }finally{
             manager.removeTestProvider(LocationManager.GPS_PROVIDER);device.executeShellCommand("appops set com.sasakiy84.solovlog android:mock_location default");
         }

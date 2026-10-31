@@ -27,6 +27,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 /** Runs on a dedicated test device: real CameraX recordings, Media3 export, and screen captures. */
+@androidx.media3.common.util.UnstableApi
 @RunWith(AndroidJUnit4.class)
 public final class CameraJourneyTest {
     private final Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -53,7 +54,8 @@ public final class CameraJourneyTest {
         UiObject2 shutter=description(duration+"秒撮影");
         long readyDeadline=SystemClock.elapsedRealtime()+20000;
         while(!shutter.isEnabled()&&SystemClock.elapsedRealtime()<readyDeadline)SystemClock.sleep(100);
-        assertThat(shutter.isEnabled()).isTrue();shutter.click();
+        assertThat(shutter.isEnabled()).isTrue();if(count==0)screenshot("00-camera-start");shutter.click();
+        if(duration==5){assertThat(device.wait(Until.hasObject(By.text("録画中")),15000)).isTrue();File screen=File.createTempFile("recording-",".png",context.getCacheDir());try{assertThat(device.takeScreenshot(screen)).isTrue();publishImage(screen,"01a-recording");}finally{screen.delete();}}
         long deadline=SystemClock.elapsedRealtime()+45000;
         while(repository.all().size()==count&&SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(200);
         List<Clip> after=repository.all();assertThat(after).hasSize(count+1);
@@ -72,8 +74,8 @@ public final class CameraJourneyTest {
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Clip two=record(2),three=record(3),five=record(5);
         assertThat(two.landscape()).isFalse();assertThat(three.landscape()).isFalse();assertThat(five.landscape()).isFalse();
-        SystemClock.sleep(5500);screenshot("01-camera");
-        clickDescription("日々の記録");text("動画を保存");
+        SystemClock.sleep(5500);UiObject2 camera=description("カメラプレビュー");assertThat(camera.getVisibleBounds().width()).isAtLeast((int)(device.getDisplayWidth()*.95));assertThat(camera.getVisibleBounds().height()).isAtLeast((int)(device.getDisplayHeight()*.95));assertThat(device.hasObject(By.text("daylog"))).isFalse();screenshot("01-camera");
+        clickDescription("日々の記録");text("動画を調整");
         clickDescription("1日のテキストを編集");description("1日のテキスト").setText("京都旅行 1日目");
         device.findObject(By.res("android","button1")).click();text("京都旅行 1日目");
         String day=JournalRules.day(two.capturedAt(),240,ZoneId.of(two.zoneId())).toString();
@@ -83,8 +85,8 @@ public final class CameraJourneyTest {
         device.findObject(By.res("android","button1")).click();
         awaitCaption(two.id(),"駅前で朝ごはん");
         screenshot("02-journal");
-        UiObject2 save=device.wait(Until.findObject(By.text("動画を保存")),15000);assertThat(save).isNotNull();save.click();
-        assertThat(device.wait(Until.hasObject(By.text("保存しました")),180000)).isTrue();
+        UiObject2 save=device.wait(Until.findObject(By.text("動画を調整")),15000);assertThat(save).isNotNull();save.click();
+        MovieJourney.renderAndSave(context,device,true,"day");
         try(Cursor cursor=context.getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,new String[]{MediaStore.Video.Media._ID},MediaStore.Video.Media.RELATIVE_PATH+"=?",new String[]{"Movies/Daylog/"},MediaStore.Video.Media._ID+" DESC")){
             assertThat(cursor).isNotNull();assertThat(cursor.moveToFirst()).isTrue();
             Uri uri=Uri.withAppendedPath(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,cursor.getString(0));
@@ -106,7 +108,7 @@ public final class CameraJourneyTest {
                 }
             }
         }
-        screenshot("03-saved");device.findObject(By.res("android","button2")).click();
+        screenshot("03-saved");clickDescription("一覧に戻る");
         clickDescription("設定");text("1日の切り替え時刻");screenshot("04-settings");
         clickDescription("撮影時刻を表示");
         assertThat(context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getBoolean("showTime",true)).isFalse();

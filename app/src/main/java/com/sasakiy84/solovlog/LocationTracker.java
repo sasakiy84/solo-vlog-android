@@ -6,7 +6,6 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.os.Looper;
 import android.os.SystemClock;
 import androidx.core.content.ContextCompat;
 import java.util.ArrayList;
@@ -32,7 +31,7 @@ final class LocationTracker {
                 if(!manager.isProviderEnabled(provider))continue;
                 Location candidate=manager.getLastKnownLocation(provider);
                 if(candidate!=null&&fresh(candidate)&&(known==null||prefer(accuracy(candidate),candidate.getElapsedRealtimeNanos(),accuracy(known),known.getElapsedRealtimeNanos(),SystemClock.elapsedRealtimeNanos())))known=candidate;
-                manager.requestLocationUpdates(provider,5000L,5f,listener,Looper.getMainLooper());registered.add(provider);
+                manager.requestLocationUpdates(provider,new android.location.LocationRequest.Builder(1000L).setQuality(android.location.LocationRequest.QUALITY_HIGH_ACCURACY).setMinUpdateIntervalMillis(500L).setMinUpdateDistanceMeters(0).setMaxUpdateDelayMillis(0).build(),context.getMainExecutor(),listener);registered.add(provider);
             }catch(SecurityException e){android.util.Log.w("DaylogLocation","Permission changed",e);}
             catch(IllegalArgumentException e){android.util.Log.w("DaylogLocation","Provider unavailable",e);}
         }
@@ -45,14 +44,22 @@ final class LocationTracker {
         changed.run();
     }
     private static float accuracy(Location location){return location.hasAccuracy()?location.getAccuracy():Float.MAX_VALUE;}
-    static boolean fresh(long time,long now){long age=now-time;return time>0&&age>=0&&age<=30_000_000_000L;}
+    static boolean fresh(long time,long now){long age=now-time;return time>0&&age>=0&&age<=10_000_000_000L;}
     static boolean prefer(float accuracy,long time,float oldAccuracy,long oldTime,long now){
         if(!fresh(time,now))return false;if(!fresh(oldTime,now))return true;
         if(time<oldTime)return oldTime-time<=10_000_000_000L&&accuracy<oldAccuracy*.8f;
         return accuracy<=oldAccuracy*1.25f||time-oldTime>=10_000_000_000L;
     }
     private boolean fresh(Location location){return fresh(location.getElapsedRealtimeNanos(),SystemClock.elapsedRealtimeNanos());}
-    Location snapshot(){return granted()&&enabled()&&latest!=null&&fresh(latest)?new Location(latest):null;}
+    Location snapshot(){
+        if(!granted()||!enabled())return null;
+        boolean fine=ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;
+        for(String provider:fine?new String[]{LocationManager.GPS_PROVIDER,LocationManager.NETWORK_PROVIDER}:new String[]{LocationManager.NETWORK_PROVIDER})try{
+            Location known=manager.getLastKnownLocation(provider);
+            if(known!=null&&fresh(known)&&point(known)!=null&&(latest==null||prefer(accuracy(known),known.getElapsedRealtimeNanos(),accuracy(latest),latest.getElapsedRealtimeNanos(),SystemClock.elapsedRealtimeNanos())))latest=new Location(known);
+        }catch(SecurityException|IllegalArgumentException e){android.util.Log.w("DaylogLocation","Latest provider fix unavailable",e);}
+        return latest!=null&&fresh(latest)?new Location(latest):null;
+    }
     static GeoPoint point(Location location){
         if(location==null)return null;
         try{return new GeoPoint(location.getLatitude(),location.getLongitude(),location.hasAccuracy()?location.getAccuracy():0);}

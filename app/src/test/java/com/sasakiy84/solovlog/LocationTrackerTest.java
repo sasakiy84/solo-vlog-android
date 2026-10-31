@@ -9,8 +9,8 @@ import org.junit.runners.JUnit4;
 public final class LocationTrackerTest {
     private static final long SECOND=1_000_000_000L,NOW=100*SECOND;
     @Test public void staleAndFutureTravelPositionsAreNotReused(){
-        assertThat(LocationTracker.fresh(NOW-30*SECOND,NOW)).isTrue();
-        assertThat(LocationTracker.fresh(NOW-30*SECOND-1,NOW)).isFalse();
+        assertThat(LocationTracker.fresh(NOW-10*SECOND,NOW)).isTrue();
+        assertThat(LocationTracker.fresh(NOW-10*SECOND-1,NOW)).isFalse();
         assertThat(LocationTracker.fresh(NOW+1,NOW)).isFalse();
     }
     @Test public void aFreshAccurateFixIsNotReplacedByANewerCoarseFix(){

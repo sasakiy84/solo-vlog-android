@@ -55,10 +55,11 @@ final class Ui {
         d.setBounds(0,0,dp(c,20),dp(c,20));return d;
     }
     static final class Shutter extends View {
-        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);private boolean recording;private float progress;
+        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);private boolean recording,white;private float progress;
         Shutter(Context c){super(c);setFocusable(true);setContentDescription("3秒撮影");}
+        void white(boolean enabled){white=enabled;invalidate();}
         void state(boolean active,float fraction,int seconds){recording=active;progress=fraction;setContentDescription(active?"撮影を停止":seconds+"秒撮影");invalidate();}
         @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo i){super.onInitializeAccessibilityNodeInfo(i);i.setClassName("android.widget.Button");}
-        @Override protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f,r=Math.min(x,y)-dp(getContext(),6);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(getContext(),3));p.setColor(recording?LINE:ACCENT);c.drawCircle(x,y,r,p);if(recording){p.setColor(ACCENT);c.drawArc(new RectF(x-r,y-r,x+r,y+r),-90,360*progress,false,p);}p.setStyle(Paint.Style.FILL);p.setColor(recording?0xFFD93025:ACCENT);if(recording){float q=dp(getContext(),14);c.drawRoundRect(x-q,y-q,x+q,y+q,dp(getContext(),5),dp(getContext(),5),p);}else c.drawCircle(x,y,r-dp(getContext(),7),p);}
+        @Override protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f,r=Math.min(x,y)-dp(getContext(),6);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(getContext(),3));p.setColor(recording?LINE:white?Color.WHITE:ACCENT);c.drawCircle(x,y,r,p);if(recording){p.setColor(ACCENT);c.drawArc(new RectF(x-r,y-r,x+r,y+r),-90,360*progress,false,p);}p.setStyle(Paint.Style.FILL);p.setColor(recording?0xFFD93025:white?Color.WHITE:ACCENT);if(recording){float q=dp(getContext(),14);c.drawRoundRect(x-q,y-q,x+q,y+q,dp(getContext(),5),dp(getContext(),5),p);}else c.drawCircle(x,y,r-dp(getContext(),7),p);}
     }
 }
