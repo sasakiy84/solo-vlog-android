@@ -40,7 +40,6 @@ import android.widget.Toast;
 import android.view.TextureView;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
-import androidx.media3.common.PlaybackException;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
@@ -79,6 +78,7 @@ public final class MainActivity extends ComponentActivity {
     private Runnable locationAfterPermission,locationAfterSettings,locationSettingsCancelled,activeEditorSave;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private final Handler main=new Handler(Looper.getMainLooper());
+    private volatile int thumbnailGeneration;
     private final LruCache<String,Bitmap> thumbnails=new LruCache<>(24);
     private LinearLayout root;
     private CameraPreview preview;
@@ -148,7 +148,7 @@ public final class MainActivity extends ComponentActivity {
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
         else if(screen==Screen.SETTINGS&&!editorOpen)renderSettingsBody();
     }
-    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
+    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;thumbnailGeneration++;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacks(resumeAfterRender);if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
@@ -173,6 +173,7 @@ public final class MainActivity extends ComponentActivity {
         screen=next;render();
     }
     private void render(){
+        thumbnailGeneration++;
         cameraReady=false;preview=null;zoomControls=null;locationIcon=null;if(locations!=null)locations.stop();captureControls.clear();durationChips.clear();if(!camera.busy())camera.unbind();
         root=column();root.setBackgroundColor(Ui.BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{
@@ -252,6 +253,7 @@ public final class MainActivity extends ComponentActivity {
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
             @Override public void binding(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);if(zoomControls!=null)zoomControls.setAvailable(false);}}
+            @Override public void changingLens(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);}}
             @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(!captureBusy);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void zoomChanged(androidx.camera.core.ZoomState state){if(screen==Screen.CAMERA&&zoomControls!=null&&!isDestroyed())zoomControls.update(state);}
             @Override public void zoomError(String message){if(!isDestroyed())toast(message);}
@@ -441,13 +443,15 @@ public final class MainActivity extends ComponentActivity {
         gap(card,9);LinearLayout meta=row();meta.addView(bold(clipTime(clip),14,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));meta.addView(text(seconds(JournalRules.exportDuration(clip))+"s",12,Ui.MUTED));card.addView(meta);
         Bitmap cached=thumbnails.get(clip.id());
         if(cached!=null)image.setImageBitmap(cached);
-        else io.execute(()->{
+        else {int generation=thumbnailGeneration;io.execute(()->{
+            if(generation!=thumbnailGeneration)return;
+            Bitmap ready=thumbnails.get(clip.id());if(ready!=null){main.post(()->{if(!isDestroyed()&&generation==thumbnailGeneration)image.setImageBitmap(ready);});return;}
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(repository.file(clip.id()).getAbsolutePath());
                 Bitmap bitmap=media.getScaledFrameAtTime(clip.trimStartMs()*1000L,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,400,400);
-                if(bitmap!=null){thumbnails.put(clip.id(),bitmap);main.post(()->{if(!isDestroyed())image.setImageBitmap(bitmap);});}
-            }catch(Exception e){main.post(()->{if(!isDestroyed())image.setContentDescription("プレビューを読み込めません。タップして再生");});}
-        });
+                if(bitmap!=null){if(generation!=thumbnailGeneration){bitmap.recycle();return;}thumbnails.put(clip.id(),bitmap);main.post(()->{if(!isDestroyed()&&generation==thumbnailGeneration)image.setImageBitmap(bitmap);});}
+            }catch(Exception e){main.post(()->{if(!isDestroyed()&&generation==thumbnailGeneration)image.setContentDescription("プレビューを読み込めません。タップして再生");});}
+        });}
         return card;
     }
     private String clipTime(Clip clip){return Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));}
@@ -469,11 +473,12 @@ public final class MainActivity extends ComponentActivity {
             previewAudio=new PreviewAudioButton(MainActivity.this,audible->{if(player!=null)player.setVolume(audible?1:0);});previewAudio.attachTo(frame);
         }
         void start(Clip clip){
-            stop();player=new ExoPlayer.Builder(MainActivity.this).build();player.setVideoTextureView(video);player.setVolume(previewAudio.isAudible()?1:0);player.setRepeatMode(Player.REPEAT_MODE_ONE);
-            player.addListener(new Player.Listener(){@Override public void onPlayerError(PlaybackException error){android.util.Log.w("DaylogPreview","Clip playback failed",error);toast("動画を再生できませんでした");}});
+            stop();player=PreviewPlayers.create(MainActivity.this,error->{android.util.Log.w("DaylogPreview","Clip playback failed",error);toast("タップして再読み込み");});player.setVideoTextureView(video);player.setVolume(previewAudio.isAudible()?1:0);player.setRepeatMode(Player.REPEAT_MODE_ONE);
+            ExoPlayer current=player;player.addListener(new Player.Listener(){@Override public void onRenderedFirstFrame(){if(player==current)captions.captureColors(video);}});
+            video.setOnClickListener(v->{if(player==null||!player.isPlaying())start(clip);});
             player.setMediaItem(new MediaItem.Builder().setUri(Uri.fromFile(repository.file(clip.id())))
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
-            player.prepare();player.play();captions.loadColors(repository.file(clip.id()),io);
+            player.prepare();player.play();
         }
         void stop(){if(player!=null){player.release();player=null;}}
     }
@@ -490,7 +495,7 @@ public final class MainActivity extends ComponentActivity {
         input.requestFocus();if(input.hasWindowFocus())window.getInsetsController().show(WindowInsets.Type.ime());
     }
     private void review(Clip clip){
-        if(editorOpen||isDestroyed())return;editorOpen=true;cameraReady=false;camera.unbind();locations.stop();
+        if(editorOpen||isDestroyed())return;editorOpen=true;thumbnailGeneration++;cameraReady=false;camera.unbind();locations.stop();
         Runnable[] refreshChoices={null};Clip[] edited={clip};boolean[] deleted={false};
         String day=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())).toString();
         LinearLayout content=column();padded(content,16);content.setGravity(Gravity.CENTER_HORIZONTAL);

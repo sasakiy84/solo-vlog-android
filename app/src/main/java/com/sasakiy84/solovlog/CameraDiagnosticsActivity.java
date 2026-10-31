@@ -237,6 +237,7 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("確認した録画").setView(playback).setPositiveButton("閉じる",null).create();dialog.setOnDismissListener(d->{video.stopPlayback();if(playbackVideo==video)playbackVideo=null;});dialog.show();
     }
     private void share(){
+        includePlaybackFailure();
         String text;try{text=report.toString(2);}catch(Exception e){text=reportText();}String sharedText=text;share.setEnabled(false);
         io.execute(()->{try{
             File directory=new File(getCacheDir(),"camera-reports");if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Cannot create report directory");
@@ -251,11 +252,16 @@ public final class CameraDiagnosticsActivity extends ComponentActivity {
         }catch(Exception e){main.post(()->{if(!isDestroyed()){update();toast("結果を共有できませんでした。コピーをお使いください");}});}});
     }
     private String reportText(){
+        includePlaybackFailure();
         try{
             if(report==null)return "カメラ情報を取得できていません";
             JSONObject shared=new JSONObject(report.toString());JSONArray attempts=shared.getJSONArray("attempts");String text=shared.toString(2);
             int omitted=0;while(text.length()>100000&&attempts.length()>1){attempts.remove(0);shared.put("omittedOlderAttempts",++omitted);text=shared.toString(2);}return text;
         }catch(Exception e){return String.valueOf(report);}
+    }
+    private void includePlaybackFailure(){
+        String failure=getSharedPreferences("daylog",0).getString("lastPlaybackFailure","");
+        if(report!=null&&!failure.isEmpty())try{report.put("lastPlaybackFailure",new JSONObject(failure));}catch(Exception e){android.util.Log.w("DaylogDiagnosis","Playback failure unavailable",e);}
     }
     private void persist(){if(report!=null)getSharedPreferences("daylog",0).edit().putString("cameraDiagnostics",report.toString()).apply();}
     private void event(JSONObject current,String step,String detail){

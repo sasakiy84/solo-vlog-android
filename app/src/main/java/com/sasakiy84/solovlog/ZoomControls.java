@@ -16,7 +16,6 @@ import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.function.Consumer;
 
 /** Presets and a graduated slider share the actual camera range. */
@@ -28,6 +27,7 @@ final class ZoomControls extends LinearLayout {
     private final Consumer<Float> changed;
     private float minimum=1,maximum=1,ratio=1;
     private boolean available,dragging;
+    private android.animation.ValueAnimator animation;
     ZoomControls(Context context,boolean leftHanded,Consumer<Float> changed){
         super(context);this.changed=changed;setOrientation(HORIZONTAL);setGravity(Gravity.CENTER_VERTICAL);setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         LinearLayout choices=new LinearLayout(context);choices.setOrientation(VERTICAL);choices.setGravity(Gravity.CENTER);
@@ -41,30 +41,39 @@ final class ZoomControls extends LinearLayout {
         value=Ui.text(context,"1×",14,Color.WHITE);value.setSingleLine(true);value.setGravity(Gravity.CENTER);track.addView(value,new LayoutParams(-1,dp(24)));track.addView(slider,new LayoutParams(-1,dp(48)));
         LayoutParams choiceParams=new LayoutParams(dp(56),dp(144));choiceParams.setMargins(leftHanded?0:dp(8),0,leftHanded?dp(8):0,0);
         if(leftHanded)addView(choices,choiceParams);addView(track,new LayoutParams(0,-1,1));if(!leftHanded)addView(choices,choiceParams);
-        slider.addOnChangeListener((view,position,fromUser)->{if(fromUser&&available){ratio=fromPosition(position);refresh(false);changed.accept(ratio);}});
+        slider.addOnChangeListener((view,position,fromUser)->{if(fromUser&&available){cancelAnimation();ratio=fromPosition(position);refresh(false);changed.accept(ratio);}});
         slider.addOnSliderTouchListener(new Slider.OnSliderTouchListener(){
-            @Override public void onStartTrackingTouch(Slider view){dragging=true;}
+            @Override public void onStartTrackingTouch(Slider view){cancelAnimation();dragging=true;}
             @Override public void onStopTrackingTouch(Slider view){dragging=false;if(available)changed.accept(ratio);}
         });refresh(true);
     }
-    void update(ZoomState state){minimum=state.getMinZoomRatio();maximum=state.getMaxZoomRatio();if(!dragging){ratio=state.getZoomRatio();refresh(true);}}
-    void setAvailable(boolean ready){available=ready;refresh(!dragging);}
+    void update(ZoomState state){minimum=state.getMinZoomRatio();maximum=state.getMaxZoomRatio();if(!dragging&&(animation==null||!animation.isRunning())){ratio=state.getZoomRatio();refresh(true);}}
+    void setAvailable(boolean ready){if(!ready)cancelAnimation();available=ready;refresh(!dragging);}
     // A wide preset names the lens approximately; selecting it must not digitally crop that lens.
     private float preset(int index){return index==0&&minimum<.85f?minimum:presets[index];}
     private String displayRatio(float zoom){return format(minimum<.85f&&Math.abs(zoom-minimum)<.0001f?Math.round(zoom*10)/10f:zoom);}
-    private void choose(int index){float zoom=preset(index);if(!available||zoom<minimum-.001f||zoom>maximum+.001f)return;ratio=Math.max(minimum,Math.min(maximum,zoom));refresh(true);changed.accept(ratio);}
+    private void cancelAnimation(){if(animation!=null){animation.cancel();animation=null;}}
+    @Override protected void onDetachedFromWindow(){cancelAnimation();super.onDetachedFromWindow();}
+    private void choose(int index){
+        float zoom=preset(index);if(!available||zoom<minimum-.001f||zoom>maximum+.001f)return;cancelAnimation();
+        float target=Math.max(minimum,Math.min(maximum,zoom));
+        if((ratio<1)==(target<1)&&Math.abs(target-ratio)>.015f){
+            animation=android.animation.ValueAnimator.ofFloat((float)Math.log(ratio),(float)Math.log(target));animation.setDuration(180);
+            animation.addUpdateListener(value->{ratio=(float)Math.exp((float)value.getAnimatedValue());refresh(true);changed.accept(ratio);});animation.start();
+        }else{ratio=target;refresh(true);changed.accept(ratio);}
+    }
     private void refresh(boolean moveSlider){
         for(int i=0;i<buttons.size();i++){
-            float preset=preset(i);TextView button=buttons.get(i);button.setText(displayRatio(preset));boolean supported=preset>=minimum-.001f&&preset<=maximum+.001f,selected=Math.abs(preset-ratio)<.015f;
+            float preset=preset(i);TextView button=buttons.get(i);String label=displayRatio(preset);if(!android.text.TextUtils.equals(button.getText(),label))button.setText(label);boolean supported=preset>=minimum-.001f&&preset<=maximum+.001f,selected=Math.abs(preset-ratio)<.015f;
             button.setEnabled(available&&supported);button.setAlpha(available&&supported?1:.35f);if(button.getBackground()==null||button.isSelected()!=selected){button.setSelected(selected);button.setTextColor(selected?Ui.INK:Color.WHITE);Ui.touch(button,selected?Color.WHITE:0x55000000,22);button.setBackground(new InsetDrawable(button.getBackground(),dp(2)));}
             button.setContentDescription((i==0&&minimum<.85f?"広角、最小倍率":preset==1?"標準 1倍":displayRatio(preset).replace("×","倍"))+(!supported?"、このカメラでは使用できません":""));
         }
-        value.setText(displayRatio(ratio));value.setContentDescription("現在の倍率 "+displayRatio(ratio).replace("×","倍"));slider.setStateDescription(displayRatio(ratio).replace("×","倍"));slider.setEnabled(available&&maximum>minimum);slider.setAlpha(available&&maximum>minimum?1:.35f);
-        if(moveSlider)slider.setValue(maximum>minimum?Math.max(0,Math.min(100,(float)(Math.log(ratio/minimum)/Math.log(maximum/minimum)*100))):0);
+        String current=displayRatio(ratio);if(!android.text.TextUtils.equals(value.getText(),current))value.setText(current);value.setContentDescription("現在の倍率 "+current.replace("×","倍"));slider.setStateDescription(current.replace("×","倍"));slider.setEnabled(available&&maximum>minimum);slider.setAlpha(available&&maximum>minimum?1:.35f);
+        if(moveSlider){float position=maximum>minimum?Math.max(0,Math.min(100,(float)(Math.log(ratio/minimum)/Math.log(maximum/minimum)*100))):0;if(Math.abs(slider.getValue()-position)>.001f)slider.setValue(position);}
     }
     // Spread low magnifications out so framing near 1× stays easy to adjust.
     private float fromPosition(float position){return maximum>minimum?(float)(minimum*Math.pow(maximum/minimum,position/100f)):minimum;}
-    private static String format(float zoom){return String.format(Locale.ROOT,"%.2f",zoom).replaceAll("0+$","").replaceAll("\\.$","")+"×";}
+    private static String format(float zoom){int rounded=Math.round(zoom*100),fraction=rounded%100;return rounded/100+(fraction==0?"":"."+(fraction<10?"0":"")+(fraction%10==0?fraction/10:fraction))+"×";}
     private int dp(int n){return Ui.dp(getContext(),n);}
     private static final class RulerSlider extends Slider {
         private final Paint marks=new Paint(Paint.ANTI_ALIAS_FLAG);

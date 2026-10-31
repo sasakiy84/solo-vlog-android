@@ -65,7 +65,7 @@ final class MovieDraft {
     }
     List<Clip> sourceClips(ClipRepository repository){
         Map<String,Clip> available=new HashMap<>();
-        for(Clip clip:repository.all())available.put(clip.id(),clip);
+        for(Clip clip:repository.forIds(clipIds))available.put(clip.id(),clip);
         List<Clip> result=new ArrayList<>();
         for(String id:clipIds){
             Clip clip=available.get(id);

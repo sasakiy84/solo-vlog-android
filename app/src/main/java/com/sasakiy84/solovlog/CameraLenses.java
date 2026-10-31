@@ -70,6 +70,12 @@ final class CameraLenses {
         return shortest/sensor.getWidth();
     }
     Lens forRatio(float ratio){return wide!=null&&ratio<standard.minimum()?wide:standard;}
+    Lens forRatio(float ratio,Lens current){
+        if(wide==null||ratio==1)return standard;
+        if(current==wide&&ratio<standard.minimum()*1.04f)return wide;
+        if(current==standard&&ratio>standard.minimum()*.98f)return standard;
+        return forRatio(ratio);
+    }
     ZoomState displayed(ZoomState nativeState,Lens active,boolean recording){
         float minimum=recording?nativeState.getMinZoomRatio()*active.scale():Math.min(standard.minimum(),wide==null?standard.minimum():wide.minimum());
         float maximum=recording?nativeState.getMaxZoomRatio()*active.scale():Math.max(standard.maximum(),wide==null?standard.maximum():wide.maximum());

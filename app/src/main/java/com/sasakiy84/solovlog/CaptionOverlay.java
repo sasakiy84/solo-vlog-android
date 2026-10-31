@@ -14,6 +14,7 @@ import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.TextureView;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.util.Size;
 import androidx.media3.common.util.UnstableApi;
@@ -23,7 +24,6 @@ import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.GlEffect;
 import androidx.media3.effect.GlShaderProgram;
 import java.io.File;
-import java.util.concurrent.ExecutorService;
 
 /** Preview and export share masks and one stable ink choice per label and clip. */
 @UnstableApi
@@ -114,7 +114,7 @@ final class CaptionOverlay implements GlEffect {
                 }
                 darkest=Math.min(darkest,luminance/15);samples++;
             }
-            if(samples==3&&CaptionColors.darkInk(darkest))colors[i]=Color.BLACK;
+            if(samples>0&&samples==frames.length&&CaptionColors.darkInk(darkest))colors[i]=Color.BLACK;
         }
         return colors;
     }
@@ -155,26 +155,31 @@ final class CaptionOverlay implements GlEffect {
         private Bitmap[] backgrounds;
         private int[] colors;
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-        private int sourceGeneration;
         Preview(Context context,Clip clip,String dayCaption,boolean showTime,boolean showDate){super(context);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);update(clip,dayCaption,showTime,showDate);}
         void update(Clip clip,String dayCaption,boolean showTime,boolean showDate){
             if(this.clip!=null&&this.clip.equals(clip)&&this.dayCaption.equals(dayCaption)&&this.showTime==showTime&&this.showDate==showDate)return;
+            if(this.clip!=null&&(!this.clip.id().equals(clip.id())||this.clip.trimStartMs()!=clip.trimStartMs()||this.clip.trimEndMs()!=clip.trimEndMs())){recycleFrames(backgrounds);backgrounds=null;}
             this.clip=clip;this.dayCaption=dayCaption;this.showTime=showTime;this.showDate=showDate;clearLabels();invalidate();
         }
-        void loadColors(File source,ExecutorService io){
-            int generation=++sourceGeneration;Clip sampledClip=clip;setAlpha(0f);
-            io.execute(()->{
-                Bitmap[] frames=sampleFrames(source,sampledClip);
-                post(()->{if(generation!=sourceGeneration){recycleFrames(frames);return;}recycleFrames(backgrounds);backgrounds=frames;colors=null;setAlpha(1f);invalidate();});
+        void captureColors(TextureView video){
+            if(backgrounds!=null)return;Clip sampled=clip;
+            // Read the displayed frame once instead of reserving another 4K decoder during playback.
+            // Export still evaluates three temporal samples and keeps the ink fixed throughout a clip.
+            video.postOnAnimation(()->{
+                if(!isAttachedToWindow()||backgrounds!=null||!clip.id().equals(sampled.id())||clip.trimStartMs()!=sampled.trimStartMs()||clip.trimEndMs()!=sampled.trimEndMs()||!video.isAvailable())return;
+                try{
+                    Bitmap frame=video.getBitmap(clip.landscape()?320:180,clip.landscape()?180:320);
+                    if(frame!=null){backgrounds=new Bitmap[]{frame};colors=null;invalidate();}
+                }catch(RuntimeException e){android.util.Log.w("DaylogCaptions","Displayed color sample unavailable",e);}
             });
         }
         private void clearLabels(){recycle(labels);labels=null;colors=null;}
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){clearLabels();}
-        @Override protected void onDetachedFromWindow(){sourceGeneration++;clearLabels();recycleFrames(backgrounds);backgrounds=null;super.onDetachedFromWindow();}
+        @Override protected void onDetachedFromWindow(){clearLabels();recycleFrames(backgrounds);backgrounds=null;super.onDetachedFromWindow();}
         @Override protected void onDraw(Canvas canvas){
             if(getWidth()==0||getHeight()==0)return;
             if(labels==null)labels=labels(getContext(),getWidth(),getHeight(),clip,dayCaption,showTime,showDate);
-            if(colors==null)colors=clipColors(getContext(),clip,dayCaption,showTime,showDate,backgrounds);
+            if(colors==null)colors=labelColors(labels,backgrounds,getWidth(),getHeight());
             for(int i=0;i<labels.length;i++){Label label=labels[i];if(label!=null){
                 paint.setColorFilter(new PorterDuffColorFilter(colors[i],PorterDuff.Mode.SRC_IN));
                 canvas.drawBitmap(label.mask(),label.x(),label.y(),paint);

@@ -26,7 +26,10 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.VideoView;
+import android.view.TextureView;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
 import androidx.activity.ComponentActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -49,8 +52,9 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private String dayCaption;
     private LocationTracker locations;
     private PlaceResolver places;
-    private VideoView video;
-    private android.media.MediaPlayer previewPlayer;
+    private TextureView video;
+    private ExoPlayer previewPlayer;
+    private android.os.ParcelFileDescriptor previewSource;
     private PreviewAudioButton previewAudio;
     private CaptionOverlay.Preview captions;
     private PlaceChoicesView choices;
@@ -65,7 +69,8 @@ public final class CaptureEditorActivity extends ComponentActivity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);repository=ClipRepository.get(this);prefs=getSharedPreferences("daylog",MODE_PRIVATE);
         String id=getIntent().getStringExtra(CLIP_ID);
-        clip=repository.all().stream().filter(c->c.id().equals(id)).findFirst().orElse(null);
+        if(id==null){finish();return;}
+        clip=repository.forIds(java.util.List.of(id)).stream().filter(c->c.id().equals(id)).findFirst().orElse(null);
         if(clip==null){finish();return;}
         setRequestedOrientation(clip.landscape()?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         dayCaption=repository.dayCaption(JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString());
@@ -77,13 +82,13 @@ public final class CaptureEditorActivity extends ComponentActivity {
         if(clip==null)return;
         if(waitingForSettings){waitingForSettings=false;if(locations.granted()&&locations.enabled()){prefs.edit().putBoolean("location",true).apply();beginLocation();}}
         else if(needsLocation()&&prefs.getBoolean("location",true)&&locations.granted()&&!locating&&!writingLocation)beginLocation();
-        if(video!=null)video.start();
+        startPreview();
     }
     @Override protected void onStop(){
-        if(clip!=null){main.removeCallbacks(save);saveEdits();locations.stop();main.removeCallbacks(timeout);if(!writingLocation)locating=false;video.pause();}
+        if(clip!=null){main.removeCallbacks(save);saveEdits();locations.stop();main.removeCallbacks(timeout);if(!writingLocation)locating=false;releasePreview();}
         visible=false;super.onStop();
     }
-    @Override protected void onDestroy(){main.removeCallbacks(save);main.removeCallbacks(timeout);previewPlayer=null;if(video!=null)video.stopPlayback();if(locations!=null)locations.stop();io.shutdown();super.onDestroy();}
+    @Override protected void onDestroy(){main.removeCallbacks(save);main.removeCallbacks(timeout);releasePreview();if(locations!=null)locations.stop();io.shutdown();super.onDestroy();}
     private int dp(int n){return Ui.dp(this,n);}
     private LinearLayout column(){LinearLayout view=new LinearLayout(this);view.setOrientation(LinearLayout.VERTICAL);return view;}
     private LinearLayout row(){LinearLayout view=new LinearLayout(this);view.setGravity(Gravity.CENTER_VERTICAL);return view;}
@@ -100,11 +105,12 @@ public final class CaptureEditorActivity extends ComponentActivity {
         String time=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));
         toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new VideoView(this);video.setAudioFocusRequest(android.media.AudioManager.AUDIOFOCUS_NONE);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
+        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new TextureView(this);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
         captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
-        previewAudio=new PreviewAudioButton(this,audible->{if(previewPlayer!=null)previewPlayer.setVolume(audible?1:0,audible?1:0);});previewAudio.attachTo(frame);
+        previewAudio=new PreviewAudioButton(this,audible->{if(previewPlayer!=null)previewPlayer.setVolume(audible?1:0);});previewAudio.attachTo(frame);
         content.addView(frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
-        video.setVideoPath(repository.file(clip.id()).getAbsolutePath());video.setOnPreparedListener(player->{previewPlayer=player;player.setVolume(previewAudio.isAudible()?1:0,previewAudio.isAudible()?1:0);player.setLooping(true);video.start();});video.setOnErrorListener((p,w,e)->{toast("動画を再生できませんでした");return true;});captions.loadColors(repository.file(clip.id()),io);
+        video.setContentDescription("動画プレビュー");video.setOnClickListener(v->{if(previewPlayer==null||!previewPlayer.isPlaying()){releasePreview();startPreview();}});
+
         choices=new PlaceChoicesView(this);LinearLayout.LayoutParams locationParams=size(-1,-2);locationParams.topMargin=dp(12);locationParams.bottomMargin=dp(8);content.addView(choices,locationParams);
         currentLocation=button("現在地を追加",false,this::requestLocation);content.addView(currentLocation,size(-1,48));
         EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");input.setTextSize(20);input.setSingleLine(false);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(1);input.setMaxLines(4);input.setMinHeight(dp(56));input.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);input.setPadding(dp(4),dp(12),dp(4),dp(6));content.addView(input,size(-1,-2));
@@ -116,6 +122,23 @@ public final class CaptureEditorActivity extends ComponentActivity {
         input.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener(){
             @Override public void onWindowFocusChanged(boolean focused){if(focused){input.getViewTreeObserver().removeOnWindowFocusChangeListener(this);getWindow().getInsetsController().show(WindowInsets.Type.ime());}}
         });
+    }
+    private void startPreview(){
+        if(!visible||video==null||previewPlayer!=null)return;
+        // GPS updates replace the original MP4 atomically; keep the playing inode stable across seeks.
+        try{previewSource=android.os.ParcelFileDescriptor.open(repository.file(clip.id()),android.os.ParcelFileDescriptor.MODE_READ_ONLY);}
+        catch(java.io.IOException e){android.util.Log.w("DaylogEditor","Could not open preview",e);toast("動画を開けませんでした");return;}
+        ExoPlayer created=PreviewPlayers.create(this,error->{android.util.Log.w("DaylogEditor","Preview failed",error);toast("タップして再読み込み");});previewPlayer=created;
+        created.setVideoTextureView(video);created.setVolume(previewAudio.isAudible()?1:0);created.setRepeatMode(Player.REPEAT_MODE_ONE);
+        created.addListener(new Player.Listener(){@Override public void onRenderedFirstFrame(){if(previewPlayer==created)captions.captureColors(video);}});
+        // Reopening this proc path gives each buffered loop its own file offset, on the pinned inode.
+        created.setMediaItem(new MediaItem.Builder().setUri(Uri.fromFile(new java.io.File("/proc/self/fd/"+previewSource.getFd())))
+            .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
+        created.prepare();created.play();
+    }
+    private void releasePreview(){
+        if(previewPlayer!=null){previewPlayer.release();previewPlayer=null;}
+        if(previewSource!=null){try{previewSource.close();}catch(java.io.IOException e){android.util.Log.w("DaylogEditor","Could not close preview",e);}previewSource=null;}
     }
     private EditText textInput(String value,String description,int limit){EditText input=new EditText(this);input.setText(value);input.setTextSize(16);input.setContentDescription(description);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setSingleLine(true);input.setImeOptions(EditorInfo.IME_ACTION_DONE|EditorInfo.IME_FLAG_NO_EXTRACT_UI);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;}
     private TextWatcher watcher(Runnable changed){return new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){changed.run();}@Override public void afterTextChanged(Editable s){}};}

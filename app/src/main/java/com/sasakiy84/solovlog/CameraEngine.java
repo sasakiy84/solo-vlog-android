@@ -42,6 +42,7 @@ public final class CameraEngine {
     public interface Listener {
         void ready();
         default void binding() {}
+        default void changingLens(){binding();}
         default void diagnostic(String stage,String detail) {}
         default void zoomChanged(ZoomState state) {}
         default void zoomError(String message) {}
@@ -106,15 +107,16 @@ public final class CameraEngine {
     }
     private void bindRearPair(CameraPreview target,boolean landscape,Listener listener){
         horizontal=landscape;preview=null;bound=false;releaseUseCases();
-        CameraProfiles.Route route=rearPair.forRatio(requestedZoom);
+        CameraProfiles.Route route=rearRoute(requestedZoom);
+        boolean changingLens=direct!=null&&!direct.matches(route,landscape);
         if(direct!=null&&!direct.matches(route,landscape)){direct.close();direct=null;}
         Listener forwarding=new Listener(){
             private boolean opened;
             public void ready(){opened=true;direct.setZoom(requestedZoom);listener.ready();}
-            public void binding(){listener.binding();}
+            public void binding(){if(changingLens)listener.changingLens();else listener.binding();}
             public void diagnostic(String step,String detail){listener.diagnostic(step,detail);}
             public void zoomChanged(ZoomState state){
-                float min=direct.busy()?state.getMinZoomRatio():rearPair.minimum(),max=direct.busy()?state.getMaxZoomRatio():rearPair.maximum(),value=state.getZoomRatio();
+                float min=direct.busy()?state.getMinZoomRatio():rearPair.minimum(),max=direct.busy()?state.getMaxZoomRatio():rearPair.maximum(),value=!opened&&changingLens?requestedZoom:state.getZoomRatio();
                 listener.zoomChanged(new ZoomState(){public float getZoomRatio(){return value;}public float getMinZoomRatio(){return min;}public float getMaxZoomRatio(){return max;}public float getLinearZoom(){return max>min?(value-min)/(max-min):0;}});
             }
             public void zoomError(String message){listener.zoomError(message);}
@@ -131,10 +133,18 @@ public final class CameraEngine {
         if(direct==null)direct=new DirectCameraEngine(context,route,landscape,forwarding);
         direct.bind(target.direct(),forwarding);
     }
+    private CameraProfiles.Route rearRoute(float ratio){
+        if(ratio==1)return rearPair.standard();
+        // Avoid repeatedly reopening two devices when a finger hovers around the lens boundary.
+        if(direct!=null&&direct.matches(rearPair.wide(),horizontal)&&ratio<1.04f)return rearPair.wide();
+        if(direct!=null&&direct.matches(rearPair.standard(),horizontal)&&ratio>.98f)return rearPair.standard();
+        return rearPair.forRatio(ratio);
+    }
     private void bindCameraX(PreviewView target,boolean landscape,Listener listener){
         if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
-        preview=target;horizontal=landscape;bindingListener=listener;listener.binding();
-        target.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+        boolean changingLens=preview==target&&boundCamera!=null;
+        preview=target;horizontal=landscape;bindingListener=listener;if(changingLens)listener.changingLens();else listener.binding();
+        target.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
         target.setScaleType(PreviewView.ScaleType.FIT_CENTER);
         var future=ProcessCameraProvider.getInstance(context);
         future.addListener(()->{
@@ -153,7 +163,7 @@ public final class CameraEngine {
                     selector=new CameraSelector.Builder().addCameraFilter(infos->new java.util.ArrayList<>(infos.stream().filter(info->androidx.camera.camera2.interop.Camera2CameraInfo.from(info).getCameraId().equals(route.cameraId())).toList())).build();
                     if(lenses==null){lenses=CameraLenses.forced(selector,provider.getCameraInfo(selector),route.physicalId(),CameraProfiles.scale(context.getSystemService(android.hardware.camera2.CameraManager.class),route));requestedZoom=lenses.standard.minimum();}
                 }else if(lenses==null){lenses=CameraLenses.discover(provider,selector,front);if(stage!=null&&stage.widestOnOpen)requestedZoom=Math.min(lenses.standard.minimum(),lenses.wide==null?lenses.standard.minimum():lenses.wide.minimum());}
-                activeLens=lenses.forRatio(requestedZoom);selector=activeLens.selector();
+                activeLens=lenses.forRatio(requestedZoom,activeLens);selector=activeLens.selector();
                 CameraInfo info=provider.getCameraInfo(selector);
                 String requested=context.getSharedPreferences("daylog",Context.MODE_PRIVATE).getString("captureQuality","auto");
                 java.util.List<Quality> order=switch(requested){
@@ -212,12 +222,14 @@ public final class CameraEngine {
             if(!Float.isFinite(ratio))return;
             if(rearPair!=null&&!selectedSuspended&&!direct.busy()){
                 requestedZoom=Math.max(rearPair.minimum(),Math.min(rearPair.maximum(),ratio));
-                if(!direct.matches(rearPair.forRatio(requestedZoom),horizontal)){bindRearPair(stage,horizontal,bindingListener);return;}
+                if(!direct.matches(rearRoute(requestedZoom),horizontal)){bindRearPair(stage,horizontal,bindingListener);return;}
             }
             direct.setZoom(ratio);return;
         }
-        Camera camera=boundCamera;if(camera==null||!bound||!Float.isFinite(ratio))return;
-        if(!busy&&lenses.forRatio(ratio)!=activeLens){requestedZoom=ratio;bound=false;bind(stage,horizontal,bindingListener);return;}
+        if(!Float.isFinite(ratio))return;
+        if(!bound&&lenses!=null){requestedZoom=ratio;return;}
+        Camera camera=boundCamera;if(camera==null||!bound)return;
+        if(!busy&&lenses.forRatio(ratio,activeLens)!=activeLens){requestedZoom=ratio;bound=false;bind(stage,horizontal,bindingListener);return;}
         ZoomState state=camera.getCameraInfo().getZoomState().getValue();if(state==null)return;
         float scale=activeLens.scale();
         requestedZoom=Math.max(state.getMinZoomRatio(),Math.min(state.getMaxZoomRatio(),ratio/scale))*scale;

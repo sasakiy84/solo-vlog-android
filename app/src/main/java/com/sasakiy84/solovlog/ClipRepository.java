@@ -63,9 +63,18 @@ public final class ClipRepository extends SQLiteOpenHelper {
         if(clip.location()!=null){values.put("latitude",clip.location().latitude());values.put("longitude",clip.location().longitude());values.put("accuracy",clip.location().accuracyMeters());}
         getWritableDatabase().insertOrThrow("clips", null, values);
     }
-    public List<Clip> all() {
+    public List<Clip> all(){return readClips("",null);}
+    List<Clip> forIds(List<String> ids){
+        List<Clip> clips=new ArrayList<>();
+        for(int start=0;start<ids.size();start+=500){
+            List<String> batch=ids.subList(start,Math.min(ids.size(),start+500));
+            clips.addAll(readClips(" WHERE c.id IN ("+String.join(",",java.util.Collections.nCopies(batch.size(),"?"))+")",batch.toArray(new String[0])));
+        }
+        return clips;
+    }
+    private List<Clip> readClips(String selection,String[] args) {
         List<Clip> clips = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT c.*, t.start_ms, t.end_ms, a.enabled FROM clips c LEFT JOIN clip_trims t ON t.clip_id=c.id LEFT JOIN clip_audio a ON a.clip_id=c.id ORDER BY c.captured_at ASC",null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT c.*, t.start_ms, t.end_ms, a.enabled FROM clips c LEFT JOIN clip_trims t ON t.clip_id=c.id LEFT JOIN clip_audio a ON a.clip_id=c.id"+selection+" ORDER BY c.captured_at ASC",args)) {
             while(c.moveToNext()){
                 Clip clip=new Clip(c.getString(0),c.getLong(1),c.getLong(2),c.getInt(3),c.getInt(4)!=0,c.getInt(5)!=0,c.getString(6),c.getString(7))
                     .withLocation(c.isNull(8)||c.isNull(9)?null:new GeoPoint(c.getDouble(8),c.getDouble(9),c.isNull(10)?0:c.getFloat(10))).withPlace(c.getString(11));

@@ -61,6 +61,17 @@ final class DirectCameraEngine {
     private volatile boolean closed,ready,busy;
     private float scale=1,nativeMin=1,nativeMax=1,zoom=1;
     private CameraEngine.Listener listener;
+    private volatile float pendingZoom;
+    private final java.util.concurrent.atomic.AtomicBoolean zoomScheduled=new java.util.concurrent.atomic.AtomicBoolean();
+    private CameraCaptureSession.CaptureCallback captureCallback;
+    private final Runnable applyPendingZoom=new Runnable(){@Override public void run(){
+        zoomScheduled.set(false);
+        if(closed||!ready)return;
+        float target=Math.max(nativeMin,Math.min(nativeMax,pendingZoom/scale));
+        if(Math.abs(target-zoom)<.0001f)return;zoom=target;
+        try{if(request!=null&&session!=null){applyZoom();session.setRepeatingRequest(request.build(),captureCallback,worker);}publishZoom();}
+        catch(Exception e){event("zoomError",e.toString());callback(()->listener.zoomError("倍率を変更できませんでした"));}
+    }};
     private final Runnable timeout=()->fail("カメラの応答がありませんでした",null);
     private final Runnable arm=this::prepareRecording;
     private final Runnable tick=new Runnable(){public void run(){
@@ -173,7 +184,7 @@ final class DirectCameraEngine {
                             // Keep the full available field of view during diagnosis and normal recording.
                             request.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
 
-                            applyZoom();session.setRepeatingRequest(request.build(),new CameraCaptureSession.CaptureCallback(){
+                            applyZoom();captureCallback=new CameraCaptureSession.CaptureCallback(){
                                 private boolean first;private int captureFailures;
                                 @Override public void onCaptureFailed(CameraCaptureSession s,CaptureRequest r,CaptureFailure failure){if(!closed&&generation==sessionGeneration&&captureFailures++<5)event("captureFailed","reason="+failure.getReason()+", frame="+failure.getFrameNumber()+", captured="+failure.wasImageCaptured());}
                                 @Override public void onCaptureBufferLost(CameraCaptureSession s,CaptureRequest r,Surface target,long frame){if(!closed&&generation==sessionGeneration&&captureFailures++<5)event("captureBufferLost","target="+(target==previewSurface?"preview":"recording")+", frame="+frame);}
@@ -185,7 +196,7 @@ final class DirectCameraEngine {
                                     for(var physical:result.getPhysicalCameraResults().entrySet())event("physicalCaptureResult",physical.getKey()+": zoom="+physical.getValue().get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+physical.getValue().get(CaptureResult.SCALER_CROP_REGION));
                                     if(!record){worker.removeCallbacks(timeout);opening=false;ready=true;publishZoom();callback(()->listener.ready());}
                                 }
-                            },worker);
+                            };session.setRepeatingRequest(request.build(),captureCallback,worker);
                             if(record){firstSensorTime=0;lastSensorTime=0;recordedFrames=0;recorder.start();recording=true;worker.removeCallbacks(timeout);capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();event("recording",videoSize+", orientationHint="+rotation);worker.post(tick);}
                         }catch(Exception e){if(record)retryRecording(e);else fail("プレビューを開始できませんでした",e);}
                     });
@@ -194,11 +205,10 @@ final class DirectCameraEngine {
             }));
         }catch(Exception e){if(record)retryRecording(e);else fail("カメラの構成に失敗しました",e);}
     }
-    void setZoom(float ratio){worker.post(()->{
-        if(closed||!ready||!Float.isFinite(ratio))return;zoom=Math.max(nativeMin,Math.min(nativeMax,ratio/scale));
-        try{if(request!=null&&session!=null){applyZoom();session.setRepeatingRequest(request.build(),null,worker);}publishZoom();}
-        catch(Exception e){event("zoomError",e.toString());callback(()->listener.zoomError("倍率を変更できませんでした"));}
-    });}
+    void setZoom(float ratio){
+        if(closed||!Float.isFinite(ratio))return;pendingZoom=ratio;
+        if(zoomScheduled.compareAndSet(false,true))worker.postDelayed(applyPendingZoom,33);
+    }
     private void applyZoom(){
         if(route.physicalId()==null&&parent.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)!=null){request.set(CaptureRequest.CONTROL_ZOOM_RATIO,zoom);return;}
         Rect active=source.get(route.lensCorrection()==0?CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE:CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);if(active==null)active=source.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);if(active==null)return;
