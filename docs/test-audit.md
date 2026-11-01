@@ -153,3 +153,7 @@ ANDROID_SERIAL=emulator-5556 python3 scripts/gradle-cloud.py :app:connectedDebug
 - Android端末テスト5件もローカル実行を試みたが、Android 16ソフトウェアエミュレーターで `/sdcard/Android` に `Transport endpoint is not connected` が発生。APKインストール後にランナーから結果が返らず、今回起動したエミュレーターを停止して中断した。5件は未検証で、テスト成功には含めない。
 
 テスト実行時間の改善値は測定していない。カメラ実機を用いる前節の手動シナリオは別途確認が必要。
+
+## 描画テストの準備処理の修正
+
+1秒のフィクスチャに合わせてクリップの長さを修正。Transformerの生成・開始がメインスレッドで例外になった場合も待機を解除して原因を報告するようにした。テスト全体にも240秒の上限を設定し、ピクセル検証の失敗時にもフレームを解放する。ローカルJVM・Pythonテストとdebug lint、端末テストAPKのビルドを再確認。端末での実行は未検証。

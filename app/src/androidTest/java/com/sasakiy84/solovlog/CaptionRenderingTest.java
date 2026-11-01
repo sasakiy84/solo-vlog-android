@@ -33,12 +33,12 @@ import org.junit.runner.RunWith;
 @UnstableApi
 @RunWith(AndroidJUnit4.class)
 public final class CaptionRenderingTest {
-    @Test public void encodedTimeAndBothCaptionsKeepInkForEachClip() throws Exception {
+    @Test(timeout=240000) public void encodedTimeAndBothCaptionsKeepInkForEachClip() throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
         List<File> files=new ArrayList<>();Transformer[] running=new Transformer[1];
         try{
             List<EditedMediaItem> items=new ArrayList<>();
-            Clip clip=new Clip("fixture",Instant.parse("2026-10-30T12:34:00Z").toEpochMilli(),2000,2,false,true,"UTC","Breakfast").withPlace("Tokyo");
+            Clip clip=new Clip("fixture",Instant.parse("2026-10-30T12:34:00Z").toEpochMilli(),1000,2,false,true,"UTC","Breakfast").withPlace("Tokyo");
             String[] backgrounds={"white.mp4","indoor.mp4"};
             for(String asset:backgrounds){
                 File footage=TestVideos.copyToCache(asset);files.add(footage);
@@ -49,22 +49,26 @@ public final class CaptionRenderingTest {
             File output=File.createTempFile("contrast-",".mp4",context.getCacheDir());files.add(output);output.delete();
             CountDownLatch done=new CountDownLatch(1);AtomicReference<Exception> error=new AtomicReference<>();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+                try {
                 running[0]=new Transformer.Builder(context).setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build()).setVideoMimeType(MimeTypes.VIDEO_H264).addListener(new Transformer.Listener(){
                     @Override public void onCompleted(Composition result,ExportResult exported){done.countDown();}
                     @Override public void onError(Composition result,ExportResult exported,ExportException failure){error.set(failure);done.countDown();}
                 }).build();running[0].start(composition,output.getAbsolutePath());
+                } catch (RuntimeException failure) { error.set(failure);done.countDown(); }
             });
-            assertThat(done.await(180,TimeUnit.SECONDS)).isTrue();if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
+            assertWithMessage("Caption export did not finish within 180 seconds").that(done.await(180,TimeUnit.SECONDS)).isTrue();if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(output.getAbsolutePath());
                 for(int n=0;n<backgrounds.length;n++){
                     Bitmap frame=media.getFrameAtTime(500000+n*1000000L,MediaMetadataRetriever.OPTION_CLOSEST);
-                    assertThat(frame).isNotNull();boolean bright=n==0;
+                    assertThat(frame).isNotNull();
+                    try {
+                    boolean bright=n==0;
                     assertInk(frame,bright,.03f,.03f,.8f,.2f,"background "+n+", day text"); // day text
                     assertInk(frame,bright,.03f,.92f,.7f,.98f,"background "+n+", clip text");
                     assertInk(frame,bright,.03f,.86f,.7f,.92f,"background "+n+", place"); // clip text
                     assertInk(frame,bright,.7f,.8f,.98f,.98f,"background "+n+", clock"); // bottom-right clock
-                    frame.recycle();
+                    } finally { frame.recycle(); }
                 }
             }
         }finally{
