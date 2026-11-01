@@ -65,7 +65,7 @@ final class ZoomControls extends LinearLayout {
     private void refresh(boolean moveSlider){
         for(int i=0;i<buttons.size();i++){
             float preset=preset(i);TextView button=buttons.get(i);String label=displayRatio(preset);if(!android.text.TextUtils.equals(button.getText(),label))button.setText(label);boolean supported=preset>=minimum-.001f&&preset<=maximum+.001f,selected=Math.abs(preset-ratio)<.015f;
-            button.setEnabled(available&&supported);button.setAlpha(available&&supported?1:.35f);if(button.getBackground()==null||button.isSelected()!=selected){button.setSelected(selected);button.setTextColor(selected?Ui.INK:Color.WHITE);Ui.touch(button,selected?Ui.ACCENT:0x55000000,22);button.setBackground(new InsetDrawable(button.getBackground(),dp(2)));}
+            button.setEnabled(available&&supported);button.setAlpha(available&&supported?1:.35f);if(button.getBackground()==null||button.isSelected()!=selected){button.setSelected(selected);button.setTextColor(selected?Ui.INK:Color.WHITE);Ui.touch(button,selected?Color.WHITE:0x55000000,22);button.setBackground(new InsetDrawable(button.getBackground(),dp(2)));}
             button.setContentDescription((i==0&&minimum<.85f?"広角、最小倍率":preset==1?"標準 1倍":displayRatio(preset).replace("×","倍"))+(!supported?"、このカメラでは使用できません":""));
         }
         String current=displayRatio(ratio);if(!android.text.TextUtils.equals(value.getText(),current))value.setText(current);value.setContentDescription("現在の倍率 "+current.replace("×","倍"));slider.setStateDescription(current.replace("×","倍"));slider.setEnabled(available&&maximum>minimum);slider.setAlpha(available&&maximum>minimum?1:.35f);

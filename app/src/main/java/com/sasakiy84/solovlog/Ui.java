@@ -11,7 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 final class Ui {
-    static final int BG=Color.WHITE,CARD=0xFFF4F4F4,INK=0xFF252A30,MUTED=0xFF70757A,ACCENT=0xFFF47836,ON_ACCENT=INK,ACCENT_DARK=0xFFA64008,ACCENT_SOFT=0xFFFFF0E7,LINE=0xFFE4E5E7;
+    static final int BG=Color.WHITE,CARD=0xFFF4F4F4,INK=0xFF252A30,MUTED=0xFF70757A,ACCENT=INK,ON_ACCENT=Color.WHITE,BRAND=0xFFB64A12,LINE=0xFFE4E5E7;
     private Ui() {}
     static int dp(Context c,float v){return Math.round(v*c.getResources().getDisplayMetrics().density);}
     static GradientDrawable rounded(Context c,int color,int radius){GradientDrawable s=new GradientDrawable();s.setColor(color);s.setCornerRadius(dp(c,radius));return s;}

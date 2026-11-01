@@ -249,7 +249,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         zoomControls=new ZoomControls(this,leftHanded,camera::setZoom);controls.addView(zoomControls,lp(-1,-2));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
         for(int duration:new int[]{2,3,5}){
-            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Ui.ACCENT:0x55000000,22));durationChips.add(chip);
+            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Color.WHITE:0x55000000,22));durationChips.add(chip);
             LinearLayout.LayoutParams params=lp(wide?48:64,44);params.setMargins(dp(4),0,dp(4),0);lengths.addView(chip,params);chip.setOnClickListener(v->{if(!captureBusy){selectedSeconds=duration;prefs.edit().putInt("seconds",duration).apply();resetCaptureControls();}});captureControls.add(chip);
         }
         controls.addView(lengths,lp(-1,48));
@@ -316,7 +316,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(View view:captureControls)view.setEnabled(true);
         shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"撮影できます":"準備中");liveLabel.setTextColor(Color.WHITE);liveLabel.setVisibility(cameraReady?View.INVISIBLE:View.VISIBLE);
         cameraHint.setText("");cameraHint.setVisibility(View.GONE);
-        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Ui.ACCENT:0x55000000,22));}
+        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Color.WHITE:0x55000000,22));}
     }
     private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(foreground&&!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
@@ -459,7 +459,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         TextView count=bold(seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
         TextView save=button("レンダリング","library",true,()->export(selected,selectedDay.toString(),journalLandscape));
-        save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
+        save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);Ui.touch(save,Ui.BRAND,10);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
         List<Clip> other=JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
@@ -473,7 +473,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
             content.addView(cards);
         }
         for(Clip clip:other){TextView retained=button(clipTime(clip)+" · "+(clip.landscape()?"横":"縦"),false,()->review(clip));content.addView(retained,lp(-1,48));}
-        TextView capture=button("撮影する","camera",true,()->navigate(Screen.CAMERA));LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
+        TextView capture=button("撮影する","camera",true,()->navigate(Screen.CAMERA));Ui.touch(capture,Ui.BRAND,10);LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
     }
     private View clipCard(Clip clip){
         LinearLayout card=column();FrameLayout frame=new FrameLayout(this);frame.setBackground(Ui.rounded(this,Ui.CARD,10));frame.setClipToOutline(true);
@@ -683,6 +683,8 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         LinearLayout item=row();item.setPadding(dp(4),dp(8),dp(4),dp(8));Ui.touch(item,Ui.BG,8);
         item.addView(text(title,16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));
         Switch toggle=new Switch(this);toggle.setChecked(checked);toggle.setContentDescription(title);
+        toggle.setThumbTintList(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{android.R.attr.state_checked},new int[]{}},new int[]{0xFFBDBDBD,Ui.BRAND,0xFFFAFAFA}));
+        toggle.setTrackTintList(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{android.R.attr.state_checked},new int[]{}},new int[]{0xFFE4E5E7,0xFFF0C2A7,0xFFBDBDBD}));
         toggle.setOnClickListener(v->action.run());item.addView(toggle,lp(52,48));item.setOnClickListener(v->action.run());return item;
     }
 }
