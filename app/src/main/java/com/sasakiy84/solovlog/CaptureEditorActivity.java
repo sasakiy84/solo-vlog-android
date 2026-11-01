@@ -104,7 +104,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
         EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");input.setTextSize(20);input.setSingleLine(false);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(1);input.setMaxLines(4);input.setMinHeight(dp(56));input.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);input.setPadding(dp(4),dp(12),dp(4),dp(6));content.addView(input,size(-1,-2));
         input.addTextChangedListener(watcher(()->{clip=clip.withCaption(input.getText().toString());changed();}));
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){saveAndReview();return true;}return false;});
-        LinearLayout footer=row();footer.setPadding(dp(20),dp(8),dp(20),dp(8));TextView delete=button("削除",false,this::confirmDelete);footer.addView(delete,size(72,48));View space=new View(this);footer.addView(space,new LinearLayout.LayoutParams(0,1,1));footer.addView(button("保存",true,this::saveAndReview),size(120,48));root.addView(footer,size(-1,64));
+        LinearLayout footer=row();footer.setPadding(dp(20),dp(8),dp(20),dp(8));TextView delete=button("削除",false,this::confirmDelete);footer.addView(delete,size(72,48));footer.addView(button("撮り直す",false,this::retake),size(96,48));View space=new View(this);footer.addView(space,new LinearLayout.LayoutParams(0,1,1));footer.addView(button("保存",true,this::saveAndReview),size(120,48));root.addView(footer,size(-1,64));
         refreshPlaces();input.requestFocus();
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE|android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         input.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener(){
@@ -117,6 +117,12 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private TextWatcher watcher(Runnable changed){return new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){changed.run();}@Override public void afterTextChanged(Editable s){}};}
     private void changed(){preview.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));main.removeCallbacks(save);main.postDelayed(save,250);}
     private boolean saveEdits(){if(deleted||clip==null)return false;try{repository.caption(clip.id(),clip.caption());repository.place(clip.id(),clip.place());return true;}catch(RuntimeException e){android.util.Log.w("DaylogEditor","Could not save edits",e);toast("編集内容を保存できませんでした");return false;}}
+    private void retake(){
+        if(writingLocation){toast("位置情報を保存しています");return;}
+        main.removeCallbacks(save);if(!saveEdits())return;
+        startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra("retake_clip",clip.id()));finish();
+    }
     private void saveAndReview(){main.removeCallbacks(save);if(!saveEdits())return;String day=JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString();startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("review_day",day).putExtra("edits_saved",true));finish();}
     private void refreshPlaces(){
         if(isFinishing()||isDestroyed())return;

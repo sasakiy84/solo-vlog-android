@@ -87,6 +87,7 @@ public final class MainActivity extends ComponentActivity {
     private boolean captureBusy,cameraReady;
     private final Runnable resumeAfterRender=this::resumeCamera;
     private int selectedSeconds=2;
+    private Clip retakeClip;
     private LocalDate selectedDay;
     private boolean journalLandscape;
     private Clip lastSaved;
@@ -132,13 +133,23 @@ public final class MainActivity extends ComponentActivity {
                 if(captureBusy){stopCapture();return;}
                 if(screen==Screen.SETTINGS)navigate(settingsReturn);
                 else if(screen==Screen.JOURNAL)navigate(Screen.CAMERA);
+                else if(retakeClip!=null){String id=retakeClip.id();retakeClip=null;startActivity(new Intent(MainActivity.this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,id));}
                 else{setEnabled(false);getOnBackPressedDispatcher().onBackPressed();}
             }
         });
-        readReviewIntent(getIntent());render();
+        readReviewIntent(getIntent());if(state!=null)readRetake(state.getString("retake_clip"));render();
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(captureBusy)return;readReviewIntent(intent);render();if(intent.getBooleanExtra("edits_saved",false))toast("保存しました");}
-    private void readReviewIntent(Intent intent){if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}String day=intent.getStringExtra("review_day");if(day!=null){try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}}else if(intent.getBooleanExtra("review_today",false)){selectedDay=today();screen=Screen.JOURNAL;}}
+    private void readRetake(String id){
+        if(id==null)return;
+        retakeClip=repository.forIds(List.of(id)).stream().findFirst().orElse(null);
+        if(retakeClip!=null){selectedSeconds=retakeClip.plannedSeconds();screen=Screen.CAMERA;applyOrientation();}
+    }
+    private void readReviewIntent(Intent intent){
+        retakeClip=null;
+        String retake=intent.getStringExtra("retake_clip");intent.removeExtra("retake_clip");
+        if(retake!=null){readRetake(retake);return;}
+if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}String day=intent.getStringExtra("review_day");if(day!=null){try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}}else if(intent.getBooleanExtra("review_today",false)){selectedDay=today();screen=Screen.JOURNAL;}}
     @Override protected void onResume(){super.onResume();foreground=true;AppNotifications.scheduleReminder(this);
         if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
@@ -150,10 +161,11 @@ public final class MainActivity extends ComponentActivity {
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
         state.putString("screen",screen.name());state.putString("return",settingsReturn.name());
+        if(retakeClip!=null)state.putString("retake_clip",retakeClip.id());
         state.putString("day",selectedDay.toString());state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
     }
     private int dp(float value){return Ui.dp(this,value);}
-    private boolean landscape(){return orientationFor(today());}
+    private boolean landscape(){return retakeClip!=null?retakeClip.landscape():orientationFor(today());}
     private boolean orientationFor(LocalDate day){return JournalRules.orientationFor(repository.all(),day,boundary(),prefs.getBoolean("landscape",false));}
     private int boundary(){return prefs.getInt("dayStart",240);}
     private boolean granted(String p){return ContextCompat.checkSelfPermission(this,p)==PackageManager.PERMISSION_GRANTED;}
@@ -164,6 +176,7 @@ public final class MainActivity extends ComponentActivity {
     private void applyOrientation(){setRequestedOrientation(landscape()?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);}
     private void navigate(Screen next){
         if(captureBusy)return;
+        if(next==Screen.JOURNAL)retakeClip=null;
         if(next==Screen.SETTINGS)settingsReturn=screen;
         if(next==Screen.JOURNAL&&screen==Screen.CAMERA){selectedDay=today();journalLandscape=landscape();}
         if(next==Screen.CAMERA)applyOrientation();
@@ -287,6 +300,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
+        Clip replaced=retakeClip;
         int planned=selectedSeconds;android.location.Location recordedLocation=captureLocation;String zone=ZoneId.systemDefault().getId();
         io.execute(()->{
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
@@ -299,12 +313,21 @@ public final class MainActivity extends ComponentActivity {
                 if(duration<200){
                     file.delete();main.post(()->{captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA){resetCaptureControls();toast("撮影が短すぎました。もう一度撮ってみてください。");}});return;
                 }
-                Clip clip=new Clip(file.getName().replace(".mp4",""),capturedAt,duration,planned,width>height,true,zone).withLocation(LocationTracker.point(recordedLocation));
-                repository.add(clip);lastSaved=clip;
+                Clip recorded=new Clip(file.getName().replace(".mp4",""),capturedAt,duration,planned,width>height,true,zone).withLocation(LocationTracker.point(recordedLocation));
+                Clip clip=replaced==null?recorded:recorded.withCaption(replaced.caption()).withPlace(replaced.place()).withRenderAudio(replaced.renderAudio());
+                repository.add(clip);
+                if(replaced!=null){
+                    repository.renderAudio(clip.id(),clip.renderAudio());
+                    repository.include(clip.id(),replaced.included());
+                    try{repository.delete(replaced.id());}catch(RuntimeException error){android.util.Log.w("Daylog","Original retained after retake",error);main.post(()->toast("撮り直しは保存しました。元の動画も残っています"));}
+                }
+                lastSaved=clip;
+
                 main.post(()->{
+                    if(replaced!=null&&retakeClip==replaced)retakeClip=null;
                     captureBusy=false;if(isDestroyed()){io.shutdown();return;}
-                    boolean openEditor=screen==Screen.CAMERA&&foreground&&prefs.getBoolean("postCaptureEdit",true);
-                    if(clip.location()!=null)resolvePlaces(clip,names->{
+                    boolean openEditor=screen==Screen.CAMERA&&foreground&&(replaced!=null||prefs.getBoolean("postCaptureEdit",true));
+                    if(replaced==null&&clip.location()!=null)resolvePlaces(clip,names->{
                         if(!openEditor&&locationEnabled()&&!prefs.getBoolean("placeChoice_"+clip.id(),false)){String city=names.city();if(!city.isEmpty())repository.place(clip.id(),city);}
                     });
                     if(screen==Screen.CAMERA){
@@ -313,7 +336,7 @@ public final class MainActivity extends ComponentActivity {
                             cameraReady=false;camera.unbind();locations.stop();
                             startActivity(new Intent(this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,clip.id()));
                         }
-                        else{undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
+                        else if(replaced==null){undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
                     }
                 });
             }catch(Exception e){main.post(()->{captureBusy=false;if(!isDestroyed()){render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
