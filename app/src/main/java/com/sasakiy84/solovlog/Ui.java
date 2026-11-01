@@ -45,7 +45,7 @@ final class Ui {
     }
     static android.graphics.drawable.Drawable drawable(Context c,String kind,int color){
         int resource=switch(kind){
-            case "volume_on"->R.drawable.ic_volume_up;case "volume_off"->R.drawable.ic_volume_off;case "back"->R.drawable.ic_arrow_back;case "gear"->R.drawable.ic_settings;
+            case "delete"->R.drawable.ic_delete_outline;case "retake"->R.drawable.ic_replay;case "volume_on"->R.drawable.ic_volume_up;case "volume_off"->R.drawable.ic_volume_off;case "back"->R.drawable.ic_arrow_back;case "gear"->R.drawable.ic_settings;
             case "library"->R.drawable.ic_video_library;case "flip"->R.drawable.ic_cameraswitch;
             case "mic"->R.drawable.ic_mic;case "muted"->R.drawable.ic_mic_off;
             case "check"->R.drawable.ic_check_circle;case "unchecked"->R.drawable.ic_circle;
@@ -60,7 +60,7 @@ final class Ui {
         private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);private boolean recording,white;private float progress;
         Shutter(Context c){super(c);setFocusable(true);setContentDescription("2秒撮影");}
         void white(boolean enabled){white=enabled;invalidate();}
-        void state(boolean active,float fraction,int seconds){recording=active;progress=fraction;setContentDescription(active?"撮影を停止":seconds+"秒撮影");invalidate();}
+        void state(boolean active,float fraction,int seconds){recording=active;progress=fraction;String description=active?"撮影を停止":seconds+"秒撮影";if(!description.contentEquals(getContentDescription()))setContentDescription(description);invalidate();}
         @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo i){super.onInitializeAccessibilityNodeInfo(i);i.setClassName("android.widget.Button");}
         @Override protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f,r=Math.min(x,y)-dp(getContext(),6);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(getContext(),3));p.setColor(recording?LINE:white?Color.WHITE:ACCENT);c.drawCircle(x,y,r,p);if(recording){p.setColor(ACCENT);c.drawArc(new RectF(x-r,y-r,x+r,y+r),-90,360*progress,false,p);}p.setStyle(Paint.Style.FILL);p.setColor(recording?0xFFD93025:white?Color.WHITE:ACCENT);if(recording){float q=dp(getContext(),14);c.drawRoundRect(x-q,y-q,x+q,y+q,dp(getContext(),5),dp(getContext(),5),p);}else c.drawCircle(x,y,r-dp(getContext(),7),p);}
     }

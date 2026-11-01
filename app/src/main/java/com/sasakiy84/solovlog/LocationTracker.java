@@ -40,8 +40,9 @@ final class LocationTracker {
     void stop(){if(manager!=null)try{manager.removeUpdates(listener);}catch(SecurityException e){android.util.Log.w("DaylogLocation","Permission changed",e);}registered.clear();}
     private void accept(Location location){
         if(location==null||!fresh(location)||point(location)==null)return;
-        if(latest==null||prefer(accuracy(location),location.getElapsedRealtimeNanos(),accuracy(latest),latest.getElapsedRealtimeNanos(),SystemClock.elapsedRealtimeNanos()))latest=new Location(location);
-        changed.run();
+        if(latest!=null&&!prefer(accuracy(location),location.getElapsedRealtimeNanos(),accuracy(latest),latest.getElapsedRealtimeNanos(),SystemClock.elapsedRealtimeNanos()))return;
+        latest=new Location(location);
+        if(!registered.isEmpty())changed.run();
     }
     private static float accuracy(Location location){return location.hasAccuracy()?location.getAccuracy():Float.MAX_VALUE;}
     static boolean fresh(long time,long now){long age=now-time;return time>0&&age>=0&&age<=10_000_000_000L;}

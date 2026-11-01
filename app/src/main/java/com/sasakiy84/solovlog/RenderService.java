@@ -25,15 +25,20 @@ public final class RenderService extends Service {
     private MovieDraftStore drafts;
     private boolean saveAfterRender;
     private VideoExporter exporter;
+    private int notifiedPercent=Integer.MIN_VALUE;
+    private boolean notifiedSaving;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Runnable progress=new Runnable(){
         @Override public void run(){
             if(draft==null||exporter==null)return;
             boolean saving="saving".equals(draft.status);
             int percent=saving?-1:exporter.progress();
+            if(percent!=notifiedPercent||saving!=notifiedSaving){
+            notifiedPercent=percent;notifiedSaving=saving;
             getSystemService(NotificationManager.class).notify(NOTIFICATION_ID,AppNotifications.movie(
                 RenderService.this,draft.id,saving?"動画を保存中":"動画をレンダリング中",
                 percent>=0?percent+"%":"処理中",true,percent));
+            }
             main.postDelayed(this,1500);
         }
     };
@@ -48,6 +53,7 @@ public final class RenderService extends Service {
         if(exporter!=null)exporter.close();
         try{
             draft=drafts.load(intent.getStringExtra("draft_id"));
+            notifiedPercent=Integer.MIN_VALUE;
             saveAfterRender=intent.getBooleanExtra("save_after_render",false);
             activeId=draft.id;
             AppNotifications.channels(this);

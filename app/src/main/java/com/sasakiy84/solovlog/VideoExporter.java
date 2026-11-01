@@ -55,7 +55,7 @@ public final class VideoExporter {
     public VideoExporter(Context context) { this.context = context.getApplicationContext(); }
 
     public void render(MovieDraft draft,ClipRepository repository,RenderListener listener){
-        List<Clip> clips=draft.clips(repository),metadataClips=draft.sourceClips(repository);
+        List<Clip> metadataClips=draft.sourceClips(repository),clips=draft.displayClips(metadataClips);
         String dayCaption=draft.caption;boolean showTime=draft.showTime,showDate=draft.showDate,includeAudio=draft.audio;
         if(clips.isEmpty()){listener.error("保存するクリップを選んでください。");return;}
         if(transformer!=null||preparing){listener.error("現在の処理が終わるまでお待ちください。");return;}
@@ -90,7 +90,7 @@ public final class VideoExporter {
         });
     }
     private static boolean hasHevcEncoder(){
-        try{for(var codec:new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos())if(codec.isEncoder())for(String type:codec.getSupportedTypes())if(type.equalsIgnoreCase(MimeTypes.VIDEO_H265))return true;}
+        try{for(var codec:new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos())if(codec.isEncoder()&&codec.isHardwareAccelerated())for(String type:codec.getSupportedTypes())if(type.equalsIgnoreCase(MimeTypes.VIDEO_H265))return true;}
         catch(RuntimeException e){Log.w("DaylogExport","HEVC capabilities unavailable",e);}
         return false;
     }

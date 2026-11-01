@@ -72,7 +72,8 @@ public final class MainActivity extends ComponentActivity {
     private Ui.Icon locationIcon;
     private android.location.Location captureLocation;
     private boolean foreground,editorOpen;
-    private Runnable locationAfterPermission,locationAfterSettings,locationSettingsCancelled,activeEditorSave;
+    private Runnable locationAfterPermission,locationAfterSettings,locationSettingsCancelled,activeEditorSave,activeEditorResume;
+    private ClipPreview activeEditorPreview;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile int thumbnailGeneration;
@@ -82,6 +83,7 @@ public final class MainActivity extends ComponentActivity {
     private Ui.Shutter shutter;
     private ZoomControls zoomControls;
     private TextView liveLabel,cameraHint,undo,preparingLabel;
+    private boolean preparingShown;
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
     private boolean captureBusy,cameraReady;
@@ -150,13 +152,14 @@ public final class MainActivity extends ComponentActivity {
         String retake=intent.getStringExtra("retake_clip");intent.removeExtra("retake_clip");
         if(retake!=null){readRetake(retake);return;}
 if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}String day=intent.getStringExtra("review_day");if(day!=null){try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}}else if(intent.getBooleanExtra("review_today",false)){selectedDay=today();screen=Screen.JOURNAL;}}
-    @Override protected void onResume(){super.onResume();foreground=true;AppNotifications.scheduleReminder(this);
+    @Override protected void onResume(){super.onResume();foreground=true;
+        if(editorOpen&&activeEditorResume!=null&&RenderService.activeId==null)activeEditorResume.run();AppNotifications.scheduleReminder(this);
         if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
         if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
         else if(screen==Screen.SETTINGS&&!editorOpen)renderSettingsBody();
     }
-    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;thumbnailGeneration++;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null&&camera.busy())stopCapture();super.onStop();}
+    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(activeEditorPreview!=null)activeEditorPreview.stop();thumbnailGeneration++;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null){if(camera.busy())stopCapture();if(!captureBusy)camera.unbind();cameraReady=false;}super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacks(resumeAfterRender);if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
@@ -166,7 +169,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     }
     private int dp(float value){return Ui.dp(this,value);}
     private boolean landscape(){return retakeClip!=null?retakeClip.landscape():orientationFor(today());}
-    private boolean orientationFor(LocalDate day){return JournalRules.orientationFor(repository.all(),day,boundary(),prefs.getBoolean("landscape",false));}
+    private boolean orientationFor(LocalDate day){return JournalRules.orientationFor(repository.forDay(day,boundary()),day,boundary(),prefs.getBoolean("landscape",false));}
     private int boundary(){return prefs.getInt("dayStart",240);}
     private boolean granted(String p){return ContextCompat.checkSelfPermission(this,p)==PackageManager.PERMISSION_GRANTED;}
     private boolean sound(){return prefs.getBoolean("sound",true)&&granted(Manifest.permission.RECORD_AUDIO);}
@@ -238,7 +241,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(Ui.Icon control:leftHanded?new Ui.Icon[]{settings,audio,locationIcon}:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);LinearLayout.LayoutParams params=lp(48,48);if(leftHanded)params.rightMargin=dp(8);else params.leftMargin=dp(8);top.addView(control,params);captureControls.add(control);}
         if(leftHanded){top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));top.addView(liveLabel,lp(-2,-2));}
         updateLocationIcon();stage.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
-        preparingLabel=bold("準備中",28,Color.WHITE);preparingLabel.setGravity(Gravity.CENTER);
+        preparingShown=true;preparingLabel=bold("準備中",28,Color.WHITE);preparingLabel.setGravity(Gravity.CENTER);
         preparingLabel.setPadding(dp(24),dp(16),dp(24),dp(16));preparingLabel.setBackground(Ui.rounded(this,0xBB000000,16));
         preparingLabel.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         stage.addView(preparingLabel,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
@@ -274,15 +277,16 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
                 showPreparing(stabilizing);shutter.state(!stabilizing,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
-                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"撮影中");
+                String status=stabilizing?"準備中":fraction>=1?"保存中":"撮影中";
+                if(!status.contentEquals(liveLabel.getText()))liveLabel.setText(status);
                 liveLabel.setTextColor(Color.WHITE);
             }
-            @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
+            @Override public void saved(File file,long capturedAt){if(!foreground)camera.unbind();saveCapture(file,capturedAt);}
             @Override public void error(String message){
-                boolean wasRecording=captureBusy;captureBusy=false;
+                boolean wasRecording=captureBusy;captureBusy=false;if(!foreground)camera.unbind();
                 if(!isDestroyed()){
                     if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;if(zoomControls!=null)zoomControls.setAvailable(cameraReady);resetCaptureControls();showPreparing(false);cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
-                    toast(message);
+                    toast(message);if(foreground&&wasRecording&&!cameraReady)resumeCamera();
                 }
             }
         };
@@ -296,7 +300,17 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         captureLocation=locationEnabled()?locations.snapshot():null;
         camera.start(repository.file(UUID.randomUUID().toString()),selectedSeconds,sound(),captureLocation,cameraListener());
     }
-    private void showPreparing(boolean preparing){if(preparingLabel!=null)preparingLabel.setVisibility(preparing?View.VISIBLE:View.GONE);}
+    private void showPreparing(boolean preparing){
+        if(preparingLabel==null||preparingShown==preparing)return;
+        preparingShown=preparing;TextView label=preparingLabel;label.animate().cancel();
+        if(preparing){label.setAlpha(1);label.setVisibility(View.VISIBLE);}
+        else{
+            // Keep layout stable while camera/encoder startup is competing for the first frame.
+            label.animate().alpha(0).setDuration(100).withLayer().withEndAction(()->{
+                if(preparingLabel==label&&!preparingShown)label.setVisibility(View.INVISIBLE);
+            }).start();
+        }
+    }
     private void resetCaptureControls(){
         showPreparing(!cameraReady&&granted(Manifest.permission.CAMERA));
         for(View view:captureControls)view.setEnabled(true);
@@ -304,7 +318,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         cameraHint.setText("");cameraHint.setVisibility(View.GONE);
         for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Color.WHITE:0x55000000,22));}
     }
-    private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA)render();}}
+    private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(foreground&&!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
         Clip replaced=retakeClip;
         int planned=selectedSeconds;android.location.Location recordedLocation=captureLocation;String zone=ZoneId.systemDefault().getId();
@@ -317,7 +331,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
                 String rotation=media.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
                 if("90".equals(rotation)||"270".equals(rotation)){int old=width;width=height;height=old;}
                 if(duration<200){
-                    file.delete();main.post(()->{captureBusy=false;if(!isDestroyed()&&screen==Screen.CAMERA){resetCaptureControls();toast("撮影が短すぎました。もう一度撮ってみてください。");}});return;
+                    file.delete();main.post(()->{captureBusy=false;if(!foreground)camera.unbind();if(!isDestroyed()&&screen==Screen.CAMERA){resetCaptureControls();toast("撮影が短すぎました。もう一度撮ってみてください。");if(foreground&&!cameraReady)resumeCamera();}});return;
                 }
                 Clip recorded=new Clip(file.getName().replace(".mp4",""),capturedAt,duration,planned,width>height,true,zone).withLocation(LocationTracker.point(recordedLocation));
                 Clip clip=replaced==null?recorded:recorded.withCaption(replaced.caption()).withPlace(replaced.place()).withRenderAudio(replaced.renderAudio());
@@ -331,7 +345,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
 
                 main.post(()->{
                     if(replaced!=null&&retakeClip==replaced)retakeClip=null;
-                    captureBusy=false;if(isDestroyed()){io.shutdown();return;}
+                    captureBusy=false;if(!foreground)camera.unbind();if(isDestroyed()){io.shutdown();return;}
                     boolean openEditor=screen==Screen.CAMERA&&foreground&&(replaced!=null||prefs.getBoolean("postCaptureEdit",true));
                     if(replaced==null&&clip.location()!=null)resolvePlaces(clip,names->{
                         if(!openEditor&&locationEnabled()&&!prefs.getBoolean("placeChoice_"+clip.id(),false)){String city=names.city();if(!city.isEmpty())repository.place(clip.id(),city);}
@@ -342,10 +356,11 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
                             cameraReady=false;camera.unbind();locations.stop();
                             startActivity(new Intent(this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,clip.id()));
                         }
-                        else if(replaced==null){undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
+                        if(!openEditor&&foreground&&!cameraReady)resumeCamera();
+                        if(!openEditor&&replaced==null){undo.setText("保存しました    取り消す");undo.setVisibility(View.VISIBLE);TextView currentUndo=undo;main.postDelayed(()->currentUndo.setVisibility(View.GONE),5000);}
                     }
                 });
-            }catch(Exception e){main.post(()->{captureBusy=false;if(!isDestroyed()){render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
+            }catch(Exception e){main.post(()->{captureBusy=false;if(!foreground)camera.unbind();if(!isDestroyed()){if(foreground)render();toast("クリップを保存できませんでした。空き容量を確認してください。");}});}
         });
     }
     private boolean locationEnabled(){return prefs.getBoolean("location",true)&&locations.granted();}
@@ -427,8 +442,9 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     private void renderJournal(){
         toolbar("日々の記録",()->navigate(Screen.CAMERA),true);
         LinearLayout content=scrollBody();
+        List<Clip> all=repository.all();
         TreeSet<LocalDate> days=new TreeSet<>(Comparator.reverseOrder());days.add(today());
-        for(Clip clip:repository.all())days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
+        for(Clip clip:all)days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
             TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.BG:Ui.MUTED);
@@ -436,8 +452,8 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);
-        journalLandscape=orientationFor(selectedDay);
-        List<Clip> list=clips(selectedDay,journalLandscape,false),selected=clips(selectedDay,journalLandscape,true);
+        journalLandscape=JournalRules.orientationFor(all,selectedDay,boundary(),prefs.getBoolean("landscape",false));
+        List<Clip> list=JournalRules.clipsFor(all,selectedDay,journalLandscape,boundary(),false),selected=list.stream().filter(Clip::included).toList();
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
         LinearLayout summary=row();
         TextView count=bold(seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
@@ -446,7 +462,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
-        List<Clip> other=clips(selectedDay,!journalLandscape,false);
+        List<Clip> other=JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
         int columns=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?3:2;
         for(int index=0;index<list.size();index+=columns){
             LinearLayout cards=row();cards.setGravity(Gravity.TOP);
@@ -535,11 +551,12 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         renderAudio.setOnClickListener(view->{boolean enabled=renderAudio.isChecked();try{repository.renderAudio(clip.id(),enabled);edited[0]=edited[0].withRenderAudio(enabled);refreshPreview.run();}catch(RuntimeException e){toast("音声設定を保存できませんでした");renderAudio.setChecked(edited[0].renderAudio());}});
         audioRow.setOnClickListener(v->renderAudio.performClick());content.addView(audioRow,lp(-1,56));gap(content,12);content.addView(saveVideo,lp(-1,48));
         dialog.setOnDismissListener(d->{
-            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.stop();editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
+            main.removeCallbacks(save);save.run();if(activeEditorSave==save)activeEditorSave=null;panel.stop();if(activeEditorPreview==panel){activeEditorPreview=null;activeEditorResume=null;}editorOpen=false;locationAfterPermission=null;locationAfterSettings=null;locationSettingsCancelled=null;locations.stop();
             if(!isDestroyed()){if(screen==Screen.JOURNAL)render();else{if(shutter!=null)resetCaptureControls();resumeCamera();}}
         });
         dialog.show();dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->new AlertDialog.Builder(this).setTitle("このクリップを削除しますか？")
             .setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{try{repository.delete(clip.id());deleted[0]=true;thumbnails.remove(clip.id());dialog.dismiss();}catch(RuntimeException e){toast("削除できませんでした");}}).show());
+        activeEditorPreview=panel;activeEditorResume=()->panel.start(edited[0]);
         refreshChoices[0].run();panel.start(clip);
         if(clip.location()!=null)resolvePlaces(clip,names->{if(dialog.isShowing())refreshChoices[0].run();});
     }
@@ -562,7 +579,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
                 try{MovieDraft current=drafts.load(draft.id);
                     if("rendering".equals(current.status)||"saving".equals(current.status)){main.postDelayed(this,500);return;}
                     control.setEnabled(true);control.setText("保存");if(current.savedUri.isEmpty())toast(current.error);else onSaved.accept(Uri.parse(current.savedUri));
-                    if(control.isAttachedToWindow())preview.start(clip);
+                    if(foreground&&control.isAttachedToWindow())preview.start(clip);
                 }catch(Exception e){android.util.Log.w("Daylog","Could not read clip save state",e);control.setEnabled(true);control.setText("保存");toast("保存状況を確認できませんでした");}
             }});
         });

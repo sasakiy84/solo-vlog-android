@@ -27,6 +27,7 @@ public final class ClipRepository extends SQLiteOpenHelper {
 
     @Override public void onOpen(SQLiteDatabase db){
         super.onOpen(db);
+        db.execSQL("CREATE INDEX IF NOT EXISTS clips_captured_at ON clips(captured_at)");
         db.execSQL("CREATE TABLE IF NOT EXISTS clip_audio (clip_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE IF NOT EXISTS clip_trims (clip_id TEXT PRIMARY KEY, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL)");
     }
@@ -64,6 +65,13 @@ public final class ClipRepository extends SQLiteOpenHelper {
         getWritableDatabase().insertOrThrow("clips", null, values);
     }
     public List<Clip> all(){return readClips("",null);}
+    List<Clip> forDay(java.time.LocalDate day,int boundary){
+        // A generous UTC window covers capture zones and late day boundaries without scanning history.
+        long start=day.minusDays(2).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        long end=day.plusDays(3).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        return readClips(" WHERE c.captured_at >= ? AND c.captured_at < ?",new String[]{Long.toString(start),Long.toString(end)})
+            .stream().filter(clip->JournalRules.day(clip.capturedAt(),boundary,java.time.ZoneId.of(clip.zoneId())).equals(day)).toList();
+    }
     List<Clip> forIds(List<String> ids){
         List<Clip> clips=new ArrayList<>();
         for(int start=0;start<ids.size();start+=500){

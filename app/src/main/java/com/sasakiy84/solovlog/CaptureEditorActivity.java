@@ -104,7 +104,12 @@ public final class CaptureEditorActivity extends ComponentActivity {
         EditText input=textInput(clip.caption(),"クリップのテキスト",120);input.setHint("クリップのテキスト");input.setTextSize(20);input.setSingleLine(false);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(1);input.setMaxLines(4);input.setMinHeight(dp(56));input.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);input.setPadding(dp(4),dp(12),dp(4),dp(6));content.addView(input,size(-1,-2));
         input.addTextChangedListener(watcher(()->{clip=clip.withCaption(input.getText().toString());changed();}));
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){saveAndReview();return true;}return false;});
-        LinearLayout footer=row();footer.setPadding(dp(20),dp(8),dp(20),dp(8));TextView delete=button("削除",false,this::confirmDelete);footer.addView(delete,size(72,48));footer.addView(button("撮り直す",false,this::retake),size(96,48));View space=new View(this);footer.addView(space,new LinearLayout.LayoutParams(0,1,1));footer.addView(button("保存",true,this::saveAndReview),size(120,48));root.addView(footer,size(-1,64));
+        LinearLayout footer=row();footer.setPadding(dp(20),dp(8),dp(20),dp(8));
+        Ui.Icon delete=new Ui.Icon(this,"delete",Ui.INK,"削除",this::confirmDelete);delete.setTooltipText("削除");Ui.touch(delete,Ui.CARD,10);footer.addView(delete,size(48,48));
+        Ui.Icon retake=new Ui.Icon(this,"retake",Ui.INK,"撮り直す",this::retake);retake.setTooltipText("撮り直す");Ui.touch(retake,Ui.CARD,10);
+        LinearLayout.LayoutParams retakeParams=size(48,48);retakeParams.setMarginStart(dp(12));footer.addView(retake,retakeParams);
+        View space=new View(this);footer.addView(space,new LinearLayout.LayoutParams(0,1,1));
+        TextView saveButton=button("保存",true,this::saveAndReview);saveButton.setSingleLine(true);LinearLayout.LayoutParams saveParams=size(120,48);saveParams.setMarginStart(dp(16));footer.addView(saveButton,saveParams);root.addView(footer,size(-1,64));
         refreshPlaces();input.requestFocus();
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE|android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         input.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener(){
