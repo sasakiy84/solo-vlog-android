@@ -1,6 +1,10 @@
-# daylog
+# flint.
+
+<img src="docs/flint.svg" width="96" alt="flint. のロゴ" />
 
 Android 16 以上向けの、短い動画を1日分にまとめる個人用 Vlog アプリです。
+
+名前は発火石（flint）に由来します。「火花を散らす一瞬のきっかけ」と、「石という、固く残るもの」。日常の一瞬を記録に残すアプリです。ロゴは石の割れ目と、アクセントカラーのオレンジ（`#F47836`）の断面を表しています。
 
 [最新版をダウンロード](https://github.com/sasakiy84/solo-vlog-android/releases/latest)
 

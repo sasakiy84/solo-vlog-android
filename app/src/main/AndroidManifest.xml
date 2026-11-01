@@ -15,7 +15,7 @@
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:icon="@drawable/ic_daylog"
+        android:icon="@mipmap/ic_flint"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:theme="@style/Theme.Daylog">
         <!-- Keep the selected recording orientation on Android 16 large screens too. -->
