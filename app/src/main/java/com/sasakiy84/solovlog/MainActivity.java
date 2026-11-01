@@ -579,6 +579,13 @@ public final class MainActivity extends ComponentActivity {
             prefs.edit().putString("captureQuality",qualityValues[which]).apply();dialog.dismiss();renderSettingsBody();
         }).setNegativeButton("キャンセル",null).show());content.addView(resolution);gap(content,1);
 
+        boolean brighter=prefs.getBoolean("brighterExposure",false);
+        LinearLayout brightness=preferenceRow("明るさの自動調整",brighter?"明るめ":"標準");
+        brightness.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("明るさの自動調整")
+            .setSingleChoiceItems(new String[]{"標準","明るめ"},brighter?1:0,(dialog,which)->{
+                prefs.edit().putBoolean("brighterExposure",which==1).apply();dialog.dismiss();renderSettingsBody();
+            }).setNegativeButton("キャンセル",null).show());content.addView(brightness);gap(content,1);
+
         content.addView(settingToggle("容量優先（最大1080p）",prefs.getBoolean("compactExport",false),()->{prefs.edit().putBoolean("compactExport",!prefs.getBoolean("compactExport",false)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("書き出しに位置情報を含める",prefs.getBoolean("embedLocation",true),()->{prefs.edit().putBoolean("embedLocation",!prefs.getBoolean("embedLocation",true)).apply();renderSettingsBody();}));gap(content,1);
 

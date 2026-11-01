@@ -101,6 +101,8 @@ final class DirectCameraEngine {
         if(closed||opening||device!=null)return;opening=true;
         try{
             parent=manager.getCameraCharacteristics(route.cameraId());source=route.physicalId()==null?parent:manager.getCameraCharacteristics(route.physicalId());
+            var exposureState=exposure();
+            if(exposureState.supported())exposureIndex=Math.max(exposureState.minimum(),Math.min(exposureState.maximum(),Math.round(initialExposure/exposureState.step())));
             scale=CameraProfiles.scale(manager,route);
             Range<Float> nativeRange=parent.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
             if(route.physicalId()==null&&nativeRange!=null){nativeMin=nativeRange.getLower();nativeMax=nativeRange.getUpper();}
@@ -185,6 +187,7 @@ final class DirectCameraEngine {
                             // Keep the full available field of view during diagnosis and normal recording.
                             request.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
 
+                            request.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,exposureIndex);
                             applyZoom();captureCallback=new CameraCaptureSession.CaptureCallback(){
                                 private boolean first;private int captureFailures;
                                 @Override public void onCaptureFailed(CameraCaptureSession s,CaptureRequest r,CaptureFailure failure){if(!closed&&generation==sessionGeneration&&captureFailures++<5)event("captureFailed","reason="+failure.getReason()+", frame="+failure.getFrameNumber()+", captured="+failure.wasImageCaptured());}
@@ -205,6 +208,23 @@ final class DirectCameraEngine {
                 public void onConfigureFailed(CameraCaptureSession failed){failed.close();if(!closed&&generation==sessionGeneration)worker.post(()->{if(record)retryRecording(new IllegalStateException("Session configuration failed"));else fail("このカメラの映像を表示できませんでした",null);});}
             }));
         }catch(Exception e){if(record)retryRecording(e);else fail("カメラの構成に失敗しました",e);}
+    }
+    private volatile int exposureIndex;
+    private volatile float initialExposure;
+    void initialExposure(float ev){initialExposure=ev;var state=exposure();if(state.supported())setExposure(Math.round(ev/state.step()));}
+    CameraEngine.Exposure exposure(){
+        if(parent==null)return new CameraEngine.Exposure(0,0,0,0);
+        var range=parent.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+        var step=parent.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+        return range==null||step==null?new CameraEngine.Exposure(0,0,0,0):new CameraEngine.Exposure(range.getLower(),range.getUpper(),step.floatValue(),exposureIndex);
+    }
+    void setExposure(int index){
+        worker.post(()->{
+            if(closed)return;
+            var state=exposure();exposureIndex=Math.max(state.minimum(),Math.min(state.maximum(),index));
+            try{if(request!=null&&session!=null){request.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,exposureIndex);session.setRepeatingRequest(request.build(),captureCallback,worker);}}
+            catch(Exception e){event("exposureError",e.toString());callback(()->listener.zoomError("明るさを変更できませんでした"));}
+        });
     }
     void setZoom(float ratio){
         if(closed||!Float.isFinite(ratio))return;pendingZoom=ratio;

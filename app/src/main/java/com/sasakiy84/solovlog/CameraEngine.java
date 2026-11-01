@@ -84,6 +84,7 @@ public final class CameraEngine {
         owner.getLifecycle().addObserver(new androidx.lifecycle.DefaultLifecycleObserver(){@Override public void onStop(LifecycleOwner owner){if(direct!=null){direct.close();direct=null;}}});
     }
     public void bind(CameraPreview target,boolean landscape,Listener listener){
+        requestedExposure=context.getSharedPreferences("daylog",0).getBoolean("brighterExposure",false)?.7f:0;
         stage=target;bindingListener=listener;
         if(!target.widestOnOpen&&!selectedSuspended&&!wideUnavailable){
             if(!rearPairResolved){
@@ -101,7 +102,7 @@ public final class CameraEngine {
             horizontal=landscape;
             preview=null;bound=false;releaseUseCases();
             if(direct==null||!direct.matches(nativeRoute,landscape)){if(direct!=null)direct.close();direct=new DirectCameraEngine(context,nativeRoute,landscape,listener);}
-            direct.bind(target.direct(),listener);return;
+            direct.initialExposure(requestedExposure);direct.bind(target.direct(),listener);return;
         }
         if(direct!=null){direct.close();direct=null;}
         bindCameraX(target.cameraX(),landscape,listener);
@@ -113,7 +114,7 @@ public final class CameraEngine {
         if(direct!=null&&!direct.matches(route,landscape)){direct.close();direct=null;}
         Listener forwarding=new Listener(){
             private boolean opened;
-            public void ready(){opened=true;direct.setZoom(requestedZoom);listener.ready();}
+            public void ready(){opened=true;direct.setZoom(requestedZoom);setExposure(requestedExposure);listener.ready();}
             public void binding(){if(changingLens)listener.changingLens();else listener.binding();}
             public void diagnostic(String step,String detail){listener.diagnostic(step,detail);}
             public void zoomChanged(ZoomState state){
@@ -142,7 +143,7 @@ public final class CameraEngine {
         return rearPair.forRatio(ratio);
     }
     private void bindCameraX(PreviewView target,boolean landscape,Listener listener){
-        if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;listener.ready();setZoom(requestedZoom);return;}
+        if(preview==target&&bound&&horizontal==landscape){bindingListener=listener;setExposure(requestedExposure);listener.ready();setZoom(requestedZoom);return;}
         boolean changingLens=preview==target&&boundCamera!=null;
         preview=target;horizontal=landscape;bindingListener=listener;if(changingLens)listener.changingLens();else listener.binding();
         target.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
@@ -194,7 +195,7 @@ public final class CameraEngine {
                 listener.diagnostic("cameraXBound","camera="+androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.getCameraInfo()).getCameraId()+", physical="+activeLens.physicalId()+", scale="+activeLens.scale()+", quality="+actualQuality);
                 zoomObserver=state->{if(boundCamera==camera&&bound&&state!=null)bindingListener.zoomChanged(lenses.displayed(state,activeLens,busy));};
                 camera.getCameraInfo().getZoomState().observe(owner,zoomObserver);
-                setZoom(requestedZoom);listener.ready();
+                setZoom(requestedZoom);setExposure(requestedExposure);listener.ready();
             }catch(Exception e){bound=false;releaseUseCases();Log.e("DaylogCamera","Camera binding failed",e);listener.diagnostic("cameraXError",e.toString());listener.error("カメラを開けませんでした。権限と端末のカメラを確認してください。");}
         },ContextCompat.getMainExecutor(context));
     }
@@ -217,6 +218,30 @@ public final class CameraEngine {
         try { if(!provider.hasCamera(next))throw new IllegalStateException("Camera unavailable"); }
         catch(CameraInfoUnavailableException e){throw new IllegalStateException("Camera unavailable",e);}
         front=!front;lenses=null;requestedZoom=1;bound=false;bind(stage,horizontal,bindingListener);
+    }
+    public record Exposure(int minimum,int maximum,float step,int index) {
+        public boolean supported(){return maximum>minimum&&step>0;}
+    }
+    private float requestedExposure;
+    public Exposure exposure(){
+        if(direct!=null)return direct.exposure();
+        if(boundCamera==null)return new Exposure(0,0,0,0);
+        var state=boundCamera.getCameraInfo().getExposureState();
+        var range=state.getExposureCompensationRange();
+        return new Exposure(range.getLower(),range.getUpper(),state.getExposureCompensationStep().floatValue(),state.getExposureCompensationIndex());
+    }
+    private void setExposure(float ev){
+        if(!Float.isFinite(ev))return;
+        Exposure state=exposure();if(!state.supported())return;
+        int index=Math.max(state.minimum(),Math.min(state.maximum(),Math.round(ev/state.step())));
+        // Keep the target EV independent of the current lens's compensation step.
+        if(direct!=null){direct.setExposure(index);return;}
+        Camera camera=boundCamera;if(camera==null)return;
+        var result=camera.getCameraControl().setExposureCompensationIndex(index);
+        result.addListener(()->{if(boundCamera!=camera)return;try{result.get();}catch(Exception e){
+            if(e.getCause() instanceof androidx.camera.core.CameraControl.OperationCanceledException)return;
+            Log.w("DaylogCamera","Exposure failed",e);bindingListener.zoomError("明るさを変更できませんでした");
+        }},context.getMainExecutor());
     }
     public void setZoom(float ratio){
         if(direct!=null){
