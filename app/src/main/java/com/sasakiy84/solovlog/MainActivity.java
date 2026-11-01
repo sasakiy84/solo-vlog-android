@@ -81,7 +81,7 @@ public final class MainActivity extends ComponentActivity {
     private CameraPreview preview;
     private Ui.Shutter shutter;
     private ZoomControls zoomControls;
-    private TextView liveLabel,cameraHint,undo;
+    private TextView liveLabel,cameraHint,undo,preparingLabel;
     private final List<View> captureControls=new ArrayList<>();
     private final List<TextView> durationChips=new ArrayList<>();
     private boolean captureBusy,cameraReady;
@@ -238,6 +238,10 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(Ui.Icon control:leftHanded?new Ui.Icon[]{settings,audio,locationIcon}:new Ui.Icon[]{locationIcon,audio,settings}){Ui.touch(control,0x66000000,24);LinearLayout.LayoutParams params=lp(48,48);if(leftHanded)params.rightMargin=dp(8);else params.leftMargin=dp(8);top.addView(control,params);captureControls.add(control);}
         if(leftHanded){top.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));top.addView(liveLabel,lp(-2,-2));}
         updateLocationIcon();stage.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
+        preparingLabel=bold("準備中",28,Color.WHITE);preparingLabel.setGravity(Gravity.CENTER);
+        preparingLabel.setPadding(dp(24),dp(16),dp(24),dp(16));preparingLabel.setBackground(Ui.rounded(this,0xBB000000,16));
+        preparingLabel.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        stage.addView(preparingLabel,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
         LinearLayout controls=column();controls.setGravity(Gravity.CENTER);controls.setPadding(dp(16),dp(8),dp(16),dp(24));controls.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x00000000,0xB0000000}));
         zoomControls=new ZoomControls(this,leftHanded,camera::setZoom);controls.addView(zoomControls,lp(-1,-2));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
@@ -262,22 +266,22 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     }
     private CameraEngine.Listener cameraListener(){
         return new CameraEngine.Listener(){
-            @Override public void binding(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);if(zoomControls!=null)zoomControls.setAvailable(false);}}
+            @Override public void binding(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;showPreparing(true);if(shutter!=null)shutter.setEnabled(false);if(zoomControls!=null)zoomControls.setAvailable(false);}}
             @Override public void changingLens(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=false;if(shutter!=null)shutter.setEnabled(false);}}
-            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(!captureBusy);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
+            @Override public void ready(){if(screen==Screen.CAMERA&&!isDestroyed()){cameraReady=true;showPreparing(false);if(zoomControls!=null)zoomControls.setAvailable(true);if(shutter!=null)shutter.setEnabled(!captureBusy);if(liveLabel!=null)liveLabel.setVisibility(View.INVISIBLE);}}
             @Override public void zoomChanged(androidx.camera.core.ZoomState state){if(screen==Screen.CAMERA&&zoomControls!=null&&!isDestroyed())zoomControls.update(state);}
             @Override public void zoomError(String message){if(!isDestroyed())toast(message);}
             @Override public void progress(float fraction,boolean stabilizing){
                 if(isDestroyed()||screen!=Screen.CAMERA)return;
-                shutter.state(true,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
-                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"録画中");
+                showPreparing(stabilizing);shutter.state(!stabilizing,fraction,selectedSeconds);liveLabel.setVisibility(View.VISIBLE);
+                liveLabel.setText(stabilizing?"準備中":fraction>=1?"保存中":"撮影中");
                 liveLabel.setTextColor(Color.WHITE);
             }
             @Override public void saved(File file,long capturedAt){saveCapture(file,capturedAt);}
             @Override public void error(String message){
                 boolean wasRecording=captureBusy;captureBusy=false;
                 if(!isDestroyed()){
-                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;if(zoomControls!=null)zoomControls.setAvailable(cameraReady);resetCaptureControls();cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
+                    if(screen==Screen.CAMERA&&shutter!=null){cameraReady=cameraReady&&wasRecording;if(zoomControls!=null)zoomControls.setAvailable(cameraReady);resetCaptureControls();showPreparing(false);cameraHint.setText("カメラ・権限・空き容量を確認してください");cameraHint.setVisibility(View.VISIBLE);}
                     toast(message);
                 }
             }
@@ -287,12 +291,14 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     private void startCapture(){
         if(!granted(Manifest.permission.CAMERA)){requestPermissions(false);return;}
         if(!cameraReady){toast("カメラを準備しています");return;}
-        captureBusy=true;undo.setVisibility(View.GONE);for(View view:captureControls)view.setEnabled(false);
+        showPreparing(true);captureBusy=true;undo.setVisibility(View.GONE);for(View view:captureControls)view.setEnabled(false);
         shutter.performHapticFeedback(HapticFeedbackConstants.CONFIRM);
         captureLocation=locationEnabled()?locations.snapshot():null;
         camera.start(repository.file(UUID.randomUUID().toString()),selectedSeconds,sound(),captureLocation,cameraListener());
     }
+    private void showPreparing(boolean preparing){if(preparingLabel!=null)preparingLabel.setVisibility(preparing?View.VISIBLE:View.GONE);}
     private void resetCaptureControls(){
+        showPreparing(!cameraReady&&granted(Manifest.permission.CAMERA));
         for(View view:captureControls)view.setEnabled(true);
         shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"撮影できます":"準備中");liveLabel.setTextColor(Color.WHITE);liveLabel.setVisibility(cameraReady?View.INVISIBLE:View.VISIBLE);
         cameraHint.setText("");cameraHint.setVisibility(View.GONE);
