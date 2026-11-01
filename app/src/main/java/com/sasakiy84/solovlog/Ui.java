@@ -11,7 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 final class Ui {
-    static final int BG=Color.WHITE,CARD=0xFFF4F4F4,INK=0xFF252A30,MUTED=0xFF70757A,ACCENT=INK,ON_ACCENT=Color.WHITE,BRAND=0xFFB64A12,LINE=0xFFE4E5E7;
+    static final int BG=Color.WHITE,CARD=0xFFF4F4F4,INK=0xFF252A30,MUTED=0xFF70757A,PRIMARY=INK,ON_PRIMARY=Color.WHITE,BRAND=0xFFB64A12,LINE=0xFFE4E5E7;
     private Ui() {}
     static int dp(Context c,float v){return Math.round(v*c.getResources().getDisplayMetrics().density);}
     static GradientDrawable rounded(Context c,int color,int radius){GradientDrawable s=new GradientDrawable();s.setColor(color);s.setCornerRadius(dp(c,radius));return s;}
@@ -62,6 +62,6 @@ final class Ui {
         void white(boolean enabled){white=enabled;invalidate();}
         void state(boolean active,float fraction,int seconds){recording=active;progress=fraction;String description=active?"撮影を停止":seconds+"秒撮影";if(!description.contentEquals(getContentDescription()))setContentDescription(description);invalidate();}
         @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo i){super.onInitializeAccessibilityNodeInfo(i);i.setClassName("android.widget.Button");}
-        @Override protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f,r=Math.min(x,y)-dp(getContext(),6);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(getContext(),3));p.setColor(recording?LINE:white?Color.WHITE:ACCENT);c.drawCircle(x,y,r,p);if(recording){p.setColor(ACCENT);c.drawArc(new RectF(x-r,y-r,x+r,y+r),-90,360*progress,false,p);}p.setStyle(Paint.Style.FILL);p.setColor(recording?0xFFD93025:white?Color.WHITE:ACCENT);if(recording){float q=dp(getContext(),14);c.drawRoundRect(x-q,y-q,x+q,y+q,dp(getContext(),5),dp(getContext(),5),p);}else c.drawCircle(x,y,r-dp(getContext(),7),p);}
+        @Override protected void onDraw(Canvas c){float x=getWidth()/2f,y=getHeight()/2f,r=Math.min(x,y)-dp(getContext(),6);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(getContext(),3));p.setColor(recording?LINE:white?Color.WHITE:PRIMARY);c.drawCircle(x,y,r,p);if(recording){p.setColor(PRIMARY);c.drawArc(new RectF(x-r,y-r,x+r,y+r),-90,360*progress,false,p);}p.setStyle(Paint.Style.FILL);p.setColor(recording?0xFFD93025:white?Color.WHITE:PRIMARY);if(recording){float q=dp(getContext(),14);c.drawRoundRect(x-q,y-q,x+q,y+q,dp(getContext(),5),dp(getContext(),5),p);}else c.drawCircle(x,y,r-dp(getContext(),7),p);}
     }
 }

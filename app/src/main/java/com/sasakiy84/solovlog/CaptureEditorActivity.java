@@ -85,7 +85,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private LinearLayout row(){LinearLayout view=new LinearLayout(this);view.setGravity(Gravity.CENTER_VERTICAL);return view;}
     private LinearLayout.LayoutParams size(int width,int height){return new LinearLayout.LayoutParams(width<0?width:dp(width),height<0?height:dp(height));}
     private TextView button(String label,boolean selected,Runnable action){
-        TextView view=Ui.text(this,label,16,selected?Ui.ON_ACCENT:Ui.INK);view.setGravity(Gravity.CENTER);view.setPadding(dp(16),dp(8),dp(16),dp(8));Ui.touch(view,selected?Ui.ACCENT:Ui.CARD,10);view.setOnClickListener(v->action.run());return view;
+        TextView view=Ui.text(this,label,16,selected?Ui.ON_PRIMARY:Ui.INK);view.setGravity(Gravity.CENTER);view.setPadding(dp(16),dp(8),dp(16),dp(8));Ui.touch(view,selected?Ui.PRIMARY:Ui.CARD,10);view.setOnClickListener(v->action.run());return view;
     }
     private void render(){
         LinearLayout root=column();root.setBackgroundColor(Ui.BG);

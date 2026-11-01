@@ -76,7 +76,7 @@ public final class ClipTrimActivity extends ComponentActivity {
     private int dp(int n){return Ui.dp(this,n);}
     private LinearLayout column(){LinearLayout view=new LinearLayout(this);view.setOrientation(LinearLayout.VERTICAL);return view;}
     private LinearLayout.LayoutParams size(int width,int height){return new LinearLayout.LayoutParams(width<0?width:dp(width),height<0?height:dp(height));}
-    private TextView saveButton(){TextView view=Ui.text(this,"保存",16,Ui.ON_ACCENT);view.setGravity(Gravity.CENTER);Ui.touch(view,Ui.ACCENT,10);view.setOnClickListener(v->save());return view;}
+    private TextView saveButton(){TextView view=Ui.text(this,"保存",16,Ui.ON_PRIMARY);view.setGravity(Gravity.CENTER);Ui.touch(view,Ui.PRIMARY,10);view.setOnClickListener(v->save());return view;}
     private void renderScreen(){
         LinearLayout root=column();root.setBackgroundColor(Ui.BG);root.setOnApplyWindowInsetsListener((view,insets)->{Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());view.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;});setContentView(root);root.requestApplyInsets();
         LinearLayout toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.addView(new Ui.Icon(this,"back",Ui.INK,"戻る",this::finish),size(edited.landscape()?48:56,edited.landscape()?48:56));toolbar.addView(Ui.text(this,"トリミング",19,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));if(edited.landscape()){LinearLayout.LayoutParams saveParams=size(80,48);saveParams.rightMargin=dp(20);toolbar.addView(saveButton(),saveParams);}root.addView(toolbar,size(-1,edited.landscape()?48:56));

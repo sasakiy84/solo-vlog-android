@@ -149,18 +149,55 @@ public final class MainActivity extends ComponentActivity {
     }
     private void readReviewIntent(Intent intent){
         retakeClip=null;
-        String retake=intent.getStringExtra("retake_clip");intent.removeExtra("retake_clip");
+        String retake=intent.getStringExtra("retake_clip");
+        intent.removeExtra("retake_clip");
         if(retake!=null){readRetake(retake);return;}
-if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}String day=intent.getStringExtra("review_day");if(day!=null){try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}}else if(intent.getBooleanExtra("review_today",false)){selectedDay=today();screen=Screen.JOURNAL;}}
-    @Override protected void onResume(){super.onResume();foreground=true;
-        if(editorOpen&&activeEditorResume!=null&&RenderService.activeId==null)activeEditorResume.run();AppNotifications.scheduleReminder(this);
-        if(locationAfterSettings!=null){Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;locationAfterSettings=null;locationSettingsCancelled=null;if(locations.granted()&&locations.enabled())ready.run();else if(cancel!=null)cancel.run();}
-        if(locationAfterPermission!=null&&locations.granted()){Runnable ready=locationAfterPermission;locationAfterPermission=null;prefs.edit().putBoolean("location",true).apply();ready.run();}
+        if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}
+        String day=intent.getStringExtra("review_day");
+        if(day!=null){
+            try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}
+            catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}
+        }else if(intent.getBooleanExtra("review_today",false)){
+            selectedDay=today();screen=Screen.JOURNAL;
+        }
+    }
+    @Override protected void onResume(){
+        super.onResume();foreground=true;
+        if(editorOpen&&activeEditorResume!=null&&RenderService.activeId==null)activeEditorResume.run();
+        AppNotifications.scheduleReminder(this);
+        if(locationAfterSettings!=null){
+            Runnable ready=locationAfterSettings,cancel=locationSettingsCancelled;
+            locationAfterSettings=null;locationSettingsCancelled=null;
+            if(locations.granted()&&locations.enabled())ready.run();
+            else if(cancel!=null)cancel.run();
+        }
+        if(locationAfterPermission!=null&&locations.granted()){
+            Runnable ready=locationAfterPermission;locationAfterPermission=null;
+            prefs.edit().putBoolean("location",true).apply();ready.run();
+        }
         if(screen==Screen.CAMERA&&preview!=null&&!captureBusy){applyOrientation();updateLocationIcon();resumeCamera();}
         else if(screen==Screen.SETTINGS&&!editorOpen)renderSettingsBody();
     }
-    @Override protected void onStop(){if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}foreground=false;if(activeEditorPreview!=null)activeEditorPreview.stop();thumbnailGeneration++;main.removeCallbacks(resumeAfterRender);if(locations!=null)locations.stop();if(camera!=null){if(camera.busy())stopCapture();if(!captureBusy)camera.unbind();cameraReady=false;}super.onStop();}
-    @Override protected void onDestroy(){main.removeCallbacks(resumeAfterRender);if(camera!=null){camera.stop();camera.unbind();}if(!captureBusy)io.shutdown();super.onDestroy();}
+    @Override protected void onStop(){
+        if(activeEditorSave!=null){main.removeCallbacks(activeEditorSave);activeEditorSave.run();}
+        foreground=false;
+        if(activeEditorPreview!=null)activeEditorPreview.stop();
+        thumbnailGeneration++;main.removeCallbacks(resumeAfterRender);
+        if(locations!=null)locations.stop();
+        if(camera!=null){
+            if(camera.busy())stopCapture();
+            // Saving completes asynchronously; its callback releases the camera once the clip is safe.
+            if(!captureBusy)camera.unbind();
+            cameraReady=false;
+        }
+        super.onStop();
+    }
+    @Override protected void onDestroy(){
+        main.removeCallbacks(resumeAfterRender);
+        if(camera!=null){camera.stop();camera.unbind();}
+        if(!captureBusy)io.shutdown();
+        super.onDestroy();
+    }
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(!captureBusy)render();}
     @Override public void onSaveInstanceState(Bundle state){
         state.putString("screen",screen.name());state.putString("return",settingsReturn.name());
@@ -205,11 +242,11 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     private void gap(LinearLayout parent,int h){parent.addView(new View(this),lp(1,h));}
     private void padded(View view,int n){view.setPadding(dp(n),dp(n),dp(n),dp(n));}
     private TextView button(String label,boolean primary,Runnable action){
-        TextView v=bold(label,15,primary?Ui.ON_ACCENT:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.ACCENT:Ui.CARD,10);
+        TextView v=bold(label,15,primary?Ui.ON_PRIMARY:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.PRIMARY:Ui.CARD,10);
         v.setPadding(dp(16),dp(12),dp(16),dp(12));v.setMinHeight(dp(48));v.setOnClickListener(view->action.run());return v;
     }
     private TextView button(String label,String iconKind,boolean primary,Runnable action){
-        TextView v=button(label,primary,action);v.setCompoundDrawablesRelative(Ui.drawable(this,iconKind,primary?Ui.ON_ACCENT:Ui.INK),null,null,null);v.setCompoundDrawablePadding(dp(8));return v;
+        TextView v=button(label,primary,action);v.setCompoundDrawablesRelative(Ui.drawable(this,iconKind,primary?Ui.ON_PRIMARY:Ui.INK),null,null,null);v.setCompoundDrawablePadding(dp(8));return v;
     }
     private Ui.Icon icon(String kind,String label,Runnable action){return new Ui.Icon(this,kind,Ui.INK,label,action);}
     private void toast(String message){if(!isDestroyed())Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
@@ -447,8 +484,8 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(Clip clip:all)days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
-            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.ON_ACCENT:Ui.MUTED);
-            chip.setGravity(Gravity.CENTER);Ui.touch(chip,date.equals(selectedDay)?Ui.ACCENT:Ui.CARD,10);
+            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.ON_PRIMARY:Ui.MUTED);
+            chip.setGravity(Gravity.CENTER);Ui.touch(chip,date.equals(selectedDay)?Ui.PRIMARY:Ui.CARD,10);
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);

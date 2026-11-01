@@ -91,7 +91,7 @@ jobs:
             git push origin "refs/tags/$RELEASE_TAG"
           fi
           gh release create "$RELEASE_TAG" dist/*.apk dist/SHA256SUMS dist/apk-metadata.txt \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --title "daylog $RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "flint. $RELEASE_TAG" \
             --notes 'Android 16 以上向けの署名付き APK です。APK をダウンロードしてインストールしてください。' --draft
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
       - name: Remove signing material
