@@ -28,3 +28,5 @@ python3 scripts/release.py 1.2.3
 ```
 
 テスト・lint はローカルで実行します。GitHub Actions はリリース専用で、署名付き APK とチェックサムを GitHub Releases に公開します。
+
+依存ライブラリの更新時は[チェックサム検証の手順](docs/dependency-verification.md)に従います。

@@ -1,6 +1,9 @@
 package com.sasakiy84.solovlog;
 
-import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
@@ -21,12 +24,12 @@ public final class ClipGeotagWriterTest {
         try{
             Map<String,String> samples=encodedTracks(movie);
             ClipGeotagWriter.write(movie,new GeoPoint(35.681236,139.767125,5));
-            assertThat(encodedTracks(movie)).containsExactlyEntriesIn(samples);
+            assertEquals(samples,encodedTracks(movie));
             try(MediaMetadataRetriever metadata=new MediaMetadataRetriever()){
                 metadata.setDataSource(movie.getAbsolutePath());
-                assertThat(metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)).isEqualTo("90");
+                assertEquals("90",metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
                 String location=metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION);
-                assertThat(location).isNotNull();assertThat(location).startsWith("+35.681");assertThat(location).contains("+139.767");
+                assertNotNull(location);assertTrue(location.startsWith("+35.681"));assertTrue(location.contains("+139.767"));
             }
         }finally{movie.delete();}
     }

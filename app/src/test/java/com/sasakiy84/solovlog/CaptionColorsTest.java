@@ -1,6 +1,8 @@
 package com.sasakiy84.solovlog;
 
-import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -8,7 +10,7 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class CaptionColorsTest {
     @Test public void brightYellowAndDarkBlueUseDifferentInkDespiteBothBeingSaturated(){
-        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFFFFFF00))).isTrue();
-        assertThat(CaptionColors.darkInk(CaptionColors.luminance(0xFF0000FF))).isFalse();
+        assertTrue(CaptionColors.darkInk(CaptionColors.luminance(0xFFFFFF00)));
+        assertFalse(CaptionColors.darkInk(CaptionColors.luminance(0xFF0000FF)));
     }
 }

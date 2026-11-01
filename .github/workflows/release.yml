@@ -58,7 +58,7 @@ jobs:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/solo-vlog-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_PASSWORD }}
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: ./gradlew --no-daemon :app:assembleRelease "-PreleaseVersion=$RELEASE_VERSION"
+        run: ./gradlew --dependency-verification=strict --no-daemon :app:assembleRelease "-PreleaseVersion=$RELEASE_VERSION"
       - name: Verify signature and prepare release files
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}

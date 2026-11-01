@@ -1,7 +1,8 @@
 package com.sasakiy84.solovlog;
 
-import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
 import android.content.Context;
 import androidx.media3.effect.DefaultVideoFrameProcessor;
 import android.graphics.Bitmap;
@@ -56,12 +57,12 @@ public final class CaptionRenderingTest {
                 }).build();running[0].start(composition,output.getAbsolutePath());
                 } catch (RuntimeException failure) { error.set(failure);done.countDown(); }
             });
-            assertWithMessage("Caption export did not finish within 180 seconds").that(done.await(180,TimeUnit.SECONDS)).isTrue();if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
+            assertTrue("Caption export did not finish within 180 seconds",done.await(180,TimeUnit.SECONDS));if(error.get()!=null)throw new AssertionError("Caption export failed",error.get());
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(output.getAbsolutePath());
                 for(int n=0;n<backgrounds.length;n++){
                     Bitmap frame=media.getFrameAtTime(500000+n*1000000L,MediaMetadataRetriever.OPTION_CLOSEST);
-                    assertThat(frame).isNotNull();
+                    assertNotNull(frame);
                     try {
                     boolean bright=n==0;
                     assertInk(frame,bright,.03f,.03f,.8f,.2f,"background "+n+", day text"); // day text
@@ -82,6 +83,6 @@ public final class CaptionRenderingTest {
             int pixel=frame.getPixel(x,y);int r=(pixel>>16)&255,g=(pixel>>8)&255,b=pixel&255;
             if(bright?r<50&&g<50&&b<50:r>210&&g>210&&b>210)count++;
         }
-        assertWithMessage(label).that(count).isGreaterThan(40);
+        assertTrue(label,count>40);
     }
 }

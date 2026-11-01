@@ -1,6 +1,9 @@
 package com.sasakiy84.solovlog;
 
-import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
 import androidx.media3.common.Metadata;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.container.MdtaMetadataEntry;
@@ -24,26 +27,26 @@ public final class LocationMetadataTest {
         Clip last=new Clip("c",3,2100,2,false,true,"Asia/Tokyo").withLocation(kyoto).withPlace("京都駅");
         List<Clip> clips=List.of(first,middle,last);
         JSONArray timeline=new JSONObject(LocationMetadata.timeline(clips,"",true)).getJSONArray("clips");
-        assertThat(timeline.length()).isEqualTo(3);assertThat(timeline.getJSONObject(0).getLong("startMs")).isEqualTo(0);
-        assertThat(timeline.getJSONObject(2).getLong("startMs")).isEqualTo(5000);
-        assertThat(timeline.getJSONObject(2).getString("place")).isEqualTo("京都駅");
+        assertEquals(3,timeline.length());assertEquals(0,timeline.getJSONObject(0).getLong("startMs"));
+        assertEquals(5000,timeline.getJSONObject(2).getLong("startMs"));
+        assertEquals("京都駅",timeline.getJSONObject(2).getString("place"));
         Set<Metadata.Entry> entries=new HashSet<>();entries.add(new Mp4LocationData(35,139));LocationMetadata.apply(entries,clips,"",true);
-        assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isFalse();
-        assertThat(entries.stream().anyMatch(e->e instanceof MdtaMetadataEntry m&&m.key.equals("com.sasakiy84.daylog.timeline.v2"))).isTrue();
+        assertFalse(entries.stream().anyMatch(e->e instanceof Mp4LocationData));
+        assertTrue(entries.stream().anyMatch(e->e instanceof MdtaMetadataEntry m&&m.key.equals("com.sasakiy84.daylog.timeline.v2")));
         LocationMetadata.apply(entries,List.of(first),"",true);
-        assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isTrue();
+        assertTrue(entries.stream().anyMatch(e->e instanceof Mp4LocationData));
         LocationMetadata.apply(entries,List.of(first),"",false);
-        assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isFalse();
+        assertFalse(entries.stream().anyMatch(e->e instanceof Mp4LocationData));
         JSONArray privateTimeline=new JSONObject(LocationMetadata.timeline(clips,"",false)).getJSONArray("clips");
         for(int n=0;n<privateTimeline.length();n++){
             JSONObject item=privateTimeline.getJSONObject(n);
-            assertThat(item.has("latitude")||item.has("longitude")||item.has("place")).isFalse();
+            assertFalse(item.has("latitude")||item.has("longitude")||item.has("place"));
         }
-        assertThat(privateTimeline.getJSONObject(2).getLong("startMs")).isEqualTo(5000);
+        assertEquals(5000,privateTimeline.getJSONObject(2).getLong("startMs"));
     }
     @Test public void manualPlaceWithoutPermissionDoesNotInventCoordinates() throws Exception{
         Clip clip=new Clip("a",1,2000,2,false,true,"UTC").withPlace("京都駅");
         JSONObject item=new JSONObject(LocationMetadata.timeline(List.of(clip),"",true)).getJSONArray("clips").getJSONObject(0);
-        assertThat(item.getString("place")).isEqualTo("京都駅");assertThat(item.has("latitude")).isFalse();
+        assertEquals("京都駅",item.getString("place"));assertFalse(item.has("latitude"));
     }
 }
