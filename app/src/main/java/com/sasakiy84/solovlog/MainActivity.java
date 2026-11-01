@@ -205,11 +205,11 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
     private void gap(LinearLayout parent,int h){parent.addView(new View(this),lp(1,h));}
     private void padded(View view,int n){view.setPadding(dp(n),dp(n),dp(n),dp(n));}
     private TextView button(String label,boolean primary,Runnable action){
-        TextView v=bold(label,15,primary?Ui.BG:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.ACCENT:Ui.CARD,10);
+        TextView v=bold(label,15,primary?Ui.ON_ACCENT:Ui.INK);v.setGravity(Gravity.CENTER);Ui.touch(v,primary?Ui.ACCENT:Ui.CARD,10);
         v.setPadding(dp(16),dp(12),dp(16),dp(12));v.setMinHeight(dp(48));v.setOnClickListener(view->action.run());return v;
     }
     private TextView button(String label,String iconKind,boolean primary,Runnable action){
-        TextView v=button(label,primary,action);v.setCompoundDrawablesRelative(Ui.drawable(this,iconKind,primary?Ui.BG:Ui.INK),null,null,null);v.setCompoundDrawablePadding(dp(8));return v;
+        TextView v=button(label,primary,action);v.setCompoundDrawablesRelative(Ui.drawable(this,iconKind,primary?Ui.ON_ACCENT:Ui.INK),null,null,null);v.setCompoundDrawablePadding(dp(8));return v;
     }
     private Ui.Icon icon(String kind,String label,Runnable action){return new Ui.Icon(this,kind,Ui.INK,label,action);}
     private void toast(String message){if(!isDestroyed())Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
@@ -249,7 +249,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         zoomControls=new ZoomControls(this,leftHanded,camera::setZoom);controls.addView(zoomControls,lp(-1,-2));
         LinearLayout lengths=row();lengths.setGravity(Gravity.CENTER);
         for(int duration:new int[]{2,3,5}){
-            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Color.WHITE:0x55000000,22));durationChips.add(chip);
+            TextView chip=bold(duration+" s",16,duration==selectedSeconds?Ui.INK:Color.WHITE);chip.setGravity(Gravity.CENTER);chip.setTag(duration);chip.setContentDescription(duration+"秒を選択");chip.setSelected(duration==selectedSeconds);chip.setBackground(Ui.rounded(this,duration==selectedSeconds?Ui.ACCENT:0x55000000,22));durationChips.add(chip);
             LinearLayout.LayoutParams params=lp(wide?48:64,44);params.setMargins(dp(4),0,dp(4),0);lengths.addView(chip,params);chip.setOnClickListener(v->{if(!captureBusy){selectedSeconds=duration;prefs.edit().putInt("seconds",duration).apply();resetCaptureControls();}});captureControls.add(chip);
         }
         controls.addView(lengths,lp(-1,48));
@@ -316,7 +316,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(View view:captureControls)view.setEnabled(true);
         shutter.state(false,0,selectedSeconds);shutter.setEnabled(cameraReady);liveLabel.setText(cameraReady?"撮影できます":"準備中");liveLabel.setTextColor(Color.WHITE);liveLabel.setVisibility(cameraReady?View.INVISIBLE:View.VISIBLE);
         cameraHint.setText("");cameraHint.setVisibility(View.GONE);
-        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Color.WHITE:0x55000000,22));}
+        for(TextView chip:durationChips){boolean selected=(Integer)chip.getTag()==selectedSeconds;chip.setSelected(selected);chip.setTextColor(selected?Ui.INK:Color.WHITE);chip.setBackground(Ui.rounded(this,selected?Ui.ACCENT:0x55000000,22));}
     }
     private void stopCapture(){camera.stop();if(!camera.busy()){captureBusy=false;if(foreground&&!isDestroyed()&&screen==Screen.CAMERA)render();}}
     private void saveCapture(File file,long capturedAt){
@@ -447,7 +447,7 @@ if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}Str
         for(Clip clip:all)days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
-            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.BG:Ui.MUTED);
+            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.ON_ACCENT:Ui.MUTED);
             chip.setGravity(Gravity.CENTER);Ui.touch(chip,date.equals(selectedDay)?Ui.ACCENT:Ui.CARD,10);
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
