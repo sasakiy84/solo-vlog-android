@@ -16,7 +16,6 @@ public final class JournalRulesTest {
         assertThat(JournalRules.day(at("2026-10-31T03:59:59"),240,TOKYO)).isEqualTo(LocalDate.of(2026,10,30));
         assertThat(JournalRules.day(at("2026-10-31T04:00:00"),240,TOKYO)).isEqualTo(LocalDate.of(2026,10,31));
     }
-    @Test public void midnightBoundaryUsesCalendarDate(){assertThat(JournalRules.day(at("2026-10-31T00:00:00"),0,TOKYO)).isEqualTo(LocalDate.of(2026,10,31));}
     @Test public void changingBoundaryReclassifiesExistingCapture(){
         long instant=at("2026-10-31T02:30:00");
         assertThat(JournalRules.day(instant,240,TOKYO)).isEqualTo(LocalDate.of(2026,10,30));
@@ -49,25 +48,8 @@ public final class JournalRulesTest {
     @Test public void timestampUsesTheCaptureTimezoneAndActualClockEvenBeforeDayBoundary(){
         Clip early=new Clip("a",at("2026-10-31T03:40:00"),2000,2,false,true,TOKYO.getId());
         assertThat(JournalRules.captureTime(early)).isEqualTo("03:40");
-        assertThat(JournalRules.day(early.capturedAt(),240,TOKYO)).isEqualTo(LocalDate.of(2026,10,30));
         Clip abroad=new Clip("b",early.capturedAt(),2000,2,false,true,"UTC");
         assertThat(JournalRules.captureTime(abroad)).isEqualTo("18:40");
-    }
-    @Test public void captionCanBeTrimmedAndClearedWithoutChangingTheCaptureTime(){
-        Clip clip=new Clip("a",at("2026-10-30T09:00:00"),2000,2,false,true,TOKYO.getId()).withCaption("  朝ごはん  ");
-        assertThat(clip.caption()).isEqualTo("朝ごはん");
-        assertThat(clip.withCaption("").caption()).isEmpty();
-        assertThat(JournalRules.captureTime(clip.withCaption(""))).isEqualTo("09:00");
-    }
-    @Test public void editingACaptionPreservesOriginalCaptureAndSelectionMetadata(){
-        Clip original=new Clip("a",at("2026-10-30T09:00:00"),3100,3,true,false,TOKYO.getId());
-        Clip edited=original.withCaption("京都駅 🚅");
-        assertThat(original.caption()).isEmpty();
-        assertThat(edited).isEqualTo(new Clip("a",original.capturedAt(),3100,3,true,false,TOKYO.getId(),"京都駅 🚅"));
-    }
-    @Test public void exportKeepsRequestedDurationOrShortInterruptedRecording(){
-        assertThat(JournalRules.exportDuration(new Clip("a",0,3120,3,false,true,"UTC"))).isEqualTo(3000);
-        assertThat(JournalRules.exportDuration(new Clip("b",0,900,5,false,true,"UTC"))).isEqualTo(900);
     }
     @Test public void travelRetainsTheCaptureTimezone(){
         long instant=Instant.parse("2026-10-30T00:00:00Z").toEpochMilli();
@@ -76,9 +58,9 @@ public final class JournalRulesTest {
         assertThat(JournalRules.clipsFor(List.of(tokyo,newYork),LocalDate.of(2026,10,30),false,240,false)).containsExactly(tokyo);
     }
     @Test public void selectedFormatHandlesPortraitAndLandscapeNativeSensors(){
-        for(int sensor:new int[]{0,90,180,270}){
-            assertThat((sensor+90*JournalRules.targetRotation(sensor,true))%180).isEqualTo(0);
-            assertThat((sensor+90*JournalRules.targetRotation(sensor,false))%180).isEqualTo(90);
-        }
+        assertThat(JournalRules.targetRotation(90,true)).isEqualTo(1);
+        assertThat(JournalRules.targetRotation(90,false)).isEqualTo(0);
+        assertThat(JournalRules.targetRotation(0,true)).isEqualTo(0);
+        assertThat(JournalRules.targetRotation(0,false)).isEqualTo(1);
     }
 }

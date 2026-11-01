@@ -38,6 +38,7 @@ import androidx.lifecycle.LifecycleOwner;
 import java.io.File;
 
 /** The selected format fixes the output rotation, independent of sensor-orientation events. */
+@androidx.annotation.OptIn(markerClass = androidx.camera.camera2.interop.ExperimentalCamera2Interop.class)
 public final class CameraEngine {
     public interface Listener {
         void ready();

@@ -30,6 +30,8 @@ final class Ui {
         @Override protected void onDraw(Canvas canvas){paint.setColor(0x32FFFFFF);paint.setStrokeWidth(dp(getContext(),.6f));for(int i=1;i<3;i++){canvas.drawLine(getWidth()*i/3f,0,getWidth()*i/3f,getHeight(),paint);canvas.drawLine(0,getHeight()*i/3f,getWidth(),getHeight()*i/3f,paint);}paint.setColor(0x88FFFFFF);float x=getWidth()/2f,y=getHeight()/2f,r=dp(getContext(),4);canvas.drawLine(x-r,y,x+r,y,paint);canvas.drawLine(x,y-r,x,y+r,paint);}
     }
     // Material icons use vector assets; the touch target stays larger than the glyph.
+    // Platform theme and explicit drawable tinting are intentional (Android 16+ only).
+    @android.annotation.SuppressLint("AppCompatCustomView")
     static final class Icon extends android.widget.ImageView {
         Icon(Context c,String kind,int color,String label,Runnable click){
             super(c);

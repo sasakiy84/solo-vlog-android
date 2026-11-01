@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.15").get()
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.16").get()
 require(Regex("(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})").matches(releaseVersion)) {
     "releaseVersion must be MAJOR.MINOR.PATCH without leading zeros"
 }
@@ -70,7 +70,6 @@ dependencies {
     testImplementation("com.google.truth:truth:1.4.4")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("com.google.truth:truth:1.4.4")
 }
 

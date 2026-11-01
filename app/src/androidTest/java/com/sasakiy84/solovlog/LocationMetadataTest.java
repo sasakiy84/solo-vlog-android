@@ -29,9 +29,17 @@ public final class LocationMetadataTest {
         assertThat(timeline.getJSONObject(2).getString("place")).isEqualTo("京都駅");
         Set<Metadata.Entry> entries=new HashSet<>();entries.add(new Mp4LocationData(35,139));LocationMetadata.apply(entries,clips,"",true);
         assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isFalse();
-        assertThat(entries.stream().anyMatch(e->e instanceof MdtaMetadataEntry m&&m.key.equals(LocationMetadata.KEY))).isTrue();
+        assertThat(entries.stream().anyMatch(e->e instanceof MdtaMetadataEntry m&&m.key.equals("com.sasakiy84.daylog.timeline.v2"))).isTrue();
         LocationMetadata.apply(entries,List.of(first),"",true);
         assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isTrue();
+        LocationMetadata.apply(entries,List.of(first),"",false);
+        assertThat(entries.stream().anyMatch(e->e instanceof Mp4LocationData)).isFalse();
+        JSONArray privateTimeline=new JSONObject(LocationMetadata.timeline(clips,"",false)).getJSONArray("clips");
+        for(int n=0;n<privateTimeline.length();n++){
+            JSONObject item=privateTimeline.getJSONObject(n);
+            assertThat(item.has("latitude")||item.has("longitude")||item.has("place")).isFalse();
+        }
+        assertThat(privateTimeline.getJSONObject(2).getLong("startMs")).isEqualTo(5000);
     }
     @Test public void manualPlaceWithoutPermissionDoesNotInventCoordinates() throws Exception{
         Clip clip=new Clip("a",1,2000,2,false,true,"UTC").withPlace("京都駅");

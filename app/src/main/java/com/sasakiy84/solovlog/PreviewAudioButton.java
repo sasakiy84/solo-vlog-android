@@ -12,6 +12,8 @@ import android.widget.ImageView;
 import java.util.function.Consumer;
 
 /** Preview sound is opt-in per screen and never changes the exported audio track. */
+// Android 16 platform theme and explicit drawable tinting; no AppCompat theme or XML inflation.
+@android.annotation.SuppressLint("AppCompatCustomView")
 final class PreviewAudioButton extends ImageView {
     private boolean audible;
     PreviewAudioButton(Context context,Consumer<Boolean> changed){

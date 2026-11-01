@@ -153,7 +153,8 @@ final class DirectCameraEngine {
                     else fail("カメラを開けませんでした（"+error+"）",null);
                 });}
             });
-        }catch(Exception e){cameraOpenFailed(e);}
+        }catch(SecurityException e){cameraOpenFailed(e);}
+        catch(Exception e){cameraOpenFailed(e);}
     }
     private void cameraOpenFailed(Exception error){
         if(error instanceof CameraAccessException e&&(e.getReason()==CameraAccessException.CAMERA_IN_USE||e.getReason()==CameraAccessException.MAX_CAMERAS_IN_USE)&&openRetries++<3){

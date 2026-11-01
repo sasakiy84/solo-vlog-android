@@ -22,6 +22,7 @@ public final class RenderService extends Service {
     private static final int NOTIFICATION_ID=91;
     static String activeId;
     private MovieDraft draft;
+    private MovieDraftStore drafts;
     private boolean saveAfterRender;
     private VideoExporter exporter;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -37,6 +38,8 @@ public final class RenderService extends Service {
         }
     };
 
+    @Override public void onCreate(){super.onCreate();drafts=new MovieDraftStore(this);}
+
     @Override public IBinder onBind(Intent intent){return null;}
 
     @Override public int onStartCommand(Intent intent,int flags,int startId){
@@ -44,13 +47,13 @@ public final class RenderService extends Service {
         if(draft!=null&&("rendering".equals(draft.status)||"saving".equals(draft.status)))return START_NOT_STICKY;
         if(exporter!=null)exporter.close();
         try{
-            draft=MovieDraft.load(this,intent.getStringExtra("draft_id"));
+            draft=drafts.load(intent.getStringExtra("draft_id"));
             saveAfterRender=intent.getBooleanExtra("save_after_render",false);
             activeId=draft.id;
             AppNotifications.channels(this);
             startForeground(NOTIFICATION_ID,AppNotifications.movie(this,draft.id,"動画をレンダリング中","処理中",true,-1),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING);
-            draft.status="rendering";draft.error="";draft.save(this);
+            draft.status="rendering";draft.error="";drafts.save(draft);
             exporter=new VideoExporter(this);
             ClipRepository repository=ClipRepository.get(this);
             exporter.render(draft,repository,
@@ -68,7 +71,7 @@ public final class RenderService extends Service {
 
     private void completeRender(File output){
         try{
-            File movie=draft.movie(this);
+            File movie=drafts.movie(draft);
             Files.move(output.toPath(),movie.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
             try(MediaMetadataRetriever media=new MediaMetadataRetriever()){
                 media.setDataSource(movie.getAbsolutePath());
@@ -81,12 +84,12 @@ public final class RenderService extends Service {
             }
             draft.status=saveAfterRender?"saving":"ready";
             draft.savedUri="";
-            draft.save(this);
+            drafts.save(draft);
             if(!saveAfterRender){finishJob();return;}
             exporter.saveRendered(movie,draft.fileName,new VideoExporter.Listener(){
                 @Override public void saved(Uri uri){
                     try{
-                        draft.status="ready";draft.savedUri=uri.toString();draft.save(RenderService.this);
+                        draft.status="ready";draft.savedUri=uri.toString();drafts.save(draft);
                         finishJob();
                     }catch(Exception e){fail("保存結果を記録できませんでした");}
                 }
@@ -101,7 +104,7 @@ public final class RenderService extends Service {
 
     private void fail(String message){
         if(draft!=null)try{
-            draft.status="error";draft.error=message;draft.save(this);
+            draft.status="error";draft.error=message;drafts.save(draft);
         }catch(Exception e){Log.e(TAG,"Could not persist render error",e);}
         finishJob();
     }
@@ -120,7 +123,7 @@ public final class RenderService extends Service {
         main.removeCallbacks(progress);
         if(exporter!=null)exporter.close();
         if(draft!=null&&("rendering".equals(draft.status)||"saving".equals(draft.status)))try{
-            draft.status="error";draft.error="レンダリングが中断されました。再実行できます。";draft.save(this);
+            draft.status="error";draft.error="レンダリングが中断されました。再実行できます。";drafts.save(draft);
         }catch(Exception e){Log.e(TAG,"Could not persist interruption",e);}
         activeId=null;
         super.onDestroy();

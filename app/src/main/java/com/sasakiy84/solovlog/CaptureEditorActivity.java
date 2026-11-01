@@ -21,15 +21,10 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.view.TextureView;
-import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.common.MediaItem;
-import androidx.media3.common.Player;
 import androidx.activity.ComponentActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -52,11 +47,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
     private String dayCaption;
     private LocationTracker locations;
     private PlaceResolver places;
-    private TextureView video;
-    private ExoPlayer previewPlayer;
-    private android.os.ParcelFileDescriptor previewSource;
-    private PreviewAudioButton previewAudio;
-    private CaptionOverlay.Preview captions;
+    private ClipPreview preview;
     private PlaceChoicesView choices;
     private TextView currentLocation;
     private boolean deleted,locating,writingLocation,waitingForSettings,visible;
@@ -105,11 +96,8 @@ public final class CaptureEditorActivity extends ComponentActivity {
         String time=Instant.ofEpochMilli(clip.capturedAt()).atZone(ZoneId.of(clip.zoneId())).format(DateTimeFormatter.ofPattern("HH:mm"));
         toolbar.addView(Ui.text(this,time+"  /  "+clip.plannedSeconds()+"秒",18,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));root.addView(toolbar,size(-1,56));
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));content.setGravity(Gravity.CENTER_HORIZONTAL);scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        Ui.AspectFrame frame=new Ui.AspectFrame(this,clip.landscape());video=new TextureView(this);video.setKeepScreenOn(true);frame.addView(video,new FrameLayout.LayoutParams(-1,-1));
-        captions=new CaptionOverlay.Preview(this,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));frame.addView(captions,new FrameLayout.LayoutParams(-1,-1));
-        previewAudio=new PreviewAudioButton(this,audible->{if(previewPlayer!=null)previewPlayer.setVolume(audible?1:0);});previewAudio.attachTo(frame);
-        content.addView(frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
-        video.setContentDescription("動画プレビュー");video.setOnClickListener(v->{if(previewPlayer==null||!previewPlayer.isPlaying()){releasePreview();startPreview();}});
+        preview=new ClipPreview(this,repository,clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false),true,this::toast);
+        content.addView(preview.frame,size(-1,getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?130:180));
 
         choices=new PlaceChoicesView(this);LinearLayout.LayoutParams locationParams=size(-1,-2);locationParams.topMargin=dp(12);locationParams.bottomMargin=dp(8);content.addView(choices,locationParams);
         currentLocation=button("現在地を追加",false,this::requestLocation);content.addView(currentLocation,size(-1,48));
@@ -123,26 +111,11 @@ public final class CaptureEditorActivity extends ComponentActivity {
             @Override public void onWindowFocusChanged(boolean focused){if(focused){input.getViewTreeObserver().removeOnWindowFocusChangeListener(this);getWindow().getInsetsController().show(WindowInsets.Type.ime());}}
         });
     }
-    private void startPreview(){
-        if(!visible||video==null||previewPlayer!=null)return;
-        // GPS updates replace the original MP4 atomically; keep the playing inode stable across seeks.
-        try{previewSource=android.os.ParcelFileDescriptor.open(repository.file(clip.id()),android.os.ParcelFileDescriptor.MODE_READ_ONLY);}
-        catch(java.io.IOException e){android.util.Log.w("DaylogEditor","Could not open preview",e);toast("動画を開けませんでした");return;}
-        ExoPlayer created=PreviewPlayers.create(this,error->{android.util.Log.w("DaylogEditor","Preview failed",error);toast("タップして再読み込み");});previewPlayer=created;
-        created.setVideoTextureView(video);created.setVolume(previewAudio.isAudible()?1:0);created.setRepeatMode(Player.REPEAT_MODE_ONE);
-        created.addListener(new Player.Listener(){@Override public void onRenderedFirstFrame(){if(previewPlayer==created)captions.captureColors(video);}});
-        // Reopening this proc path gives each buffered loop its own file offset, on the pinned inode.
-        created.setMediaItem(new MediaItem.Builder().setUri(Uri.fromFile(new java.io.File("/proc/self/fd/"+previewSource.getFd())))
-            .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(clip.trimStartMs()).setEndPositionMs(clip.trimEndMs()).build()).build());
-        created.prepare();created.play();
-    }
-    private void releasePreview(){
-        if(previewPlayer!=null){previewPlayer.release();previewPlayer=null;}
-        if(previewSource!=null){try{previewSource.close();}catch(java.io.IOException e){android.util.Log.w("DaylogEditor","Could not close preview",e);}previewSource=null;}
-    }
+    private void startPreview(){if(visible&&preview!=null&&!preview.started())preview.start(clip);}
+    private void releasePreview(){if(preview!=null)preview.stop();}
     private EditText textInput(String value,String description,int limit){EditText input=new EditText(this);input.setText(value);input.setTextSize(16);input.setContentDescription(description);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setSingleLine(true);input.setImeOptions(EditorInfo.IME_ACTION_DONE|EditorInfo.IME_FLAG_NO_EXTRACT_UI);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});return input;}
     private TextWatcher watcher(Runnable changed){return new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){changed.run();}@Override public void afterTextChanged(Editable s){}};}
-    private void changed(){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));main.removeCallbacks(save);main.postDelayed(save,250);}
+    private void changed(){preview.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));main.removeCallbacks(save);main.postDelayed(save,250);}
     private boolean saveEdits(){if(deleted||clip==null)return false;try{repository.caption(clip.id(),clip.caption());repository.place(clip.id(),clip.place());return true;}catch(RuntimeException e){android.util.Log.w("DaylogEditor","Could not save edits",e);toast("編集内容を保存できませんでした");return false;}}
     private void saveAndReview(){main.removeCallbacks(save);if(!saveEdits())return;String day=JournalRules.day(clip.capturedAt(),prefs.getInt("dayStart",240),ZoneId.of(clip.zoneId())).toString();startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("review_day",day).putExtra("edits_saved",true));finish();}
     private void refreshPlaces(){
@@ -160,7 +133,7 @@ public final class CaptureEditorActivity extends ComponentActivity {
         if(deleted||!prefs.getBoolean("location",true)||!locations.granted()||!clip.place().isBlank()||prefs.getBoolean("placeChoice_"+clip.id(),false))return;
         String city=names.city();if(city.isEmpty())return;
         clip=clip.withPlace(city);markPlaceChoice();repository.place(clip.id(),city);
-        if(!isDestroyed()){captions.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));refreshPlaces();}
+        if(!isDestroyed()){preview.update(clip,dayCaption,prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));refreshPlaces();}
     }
     private void resolvePlaces(){
         if(clip.location()==null)return;

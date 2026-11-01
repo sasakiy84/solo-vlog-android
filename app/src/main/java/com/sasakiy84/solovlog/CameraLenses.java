@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** CameraX zoom ratios are local to a lens; the controls use one range across rear lenses. */
+@androidx.annotation.OptIn(markerClass = androidx.camera.camera2.interop.ExperimentalCamera2Interop.class)
 final class CameraLenses {
     record Lens(CameraSelector selector,float scale,float minimum,float maximum,CameraInfo physicalInfo) {
         String physicalId(){return physicalInfo==null?null:Camera2CameraInfo.from(physicalInfo).getCameraId();}

@@ -33,6 +33,7 @@ import java.util.List;
 @UnstableApi
 public final class MovieActivity extends ComponentActivity {
     private MovieDraft draft;
+    private MovieDraftStore drafts;
     private ClipRepository repository;
     private VideoExporter exporter;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -53,20 +54,20 @@ public final class MovieActivity extends ComponentActivity {
     private boolean showingResult,saving,keyboardVisible,foreground;
     private final Runnable poll=new Runnable(){@Override public void run(){refreshState();if(foreground&&(RenderService.activeId!=null||"rendering".equals(draft.status)||"saving".equals(draft.status))&&!main.hasCallbacks(this))main.postDelayed(this,500);}};
     @Override public void onCreate(Bundle saved){
-        super.onCreate(saved);repository=ClipRepository.get(this);exporter=new VideoExporter(this);
+        super.onCreate(saved);drafts=new MovieDraftStore(this);repository=ClipRepository.get(this);exporter=new VideoExporter(this);
         try{
             String id=saved!=null?saved.getString("draft_id"):getIntent().getStringExtra("draft_id");
-            if(id!=null)draft=MovieDraft.load(this,id);
+            if(id!=null)draft=drafts.load(id);
             else{
                 List<String> ids=getIntent().getStringArrayListExtra("clips");if(ids==null||ids.isEmpty())throw new IllegalArgumentException("No clips");
                 var prefs=getSharedPreferences("daylog",0);MovieDraft created=MovieDraft.create(this,getIntent().getStringExtra("day"),ids,getIntent().getStringExtra("caption"),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
                 created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime,created.showDate)+":"+created.compact+":"+created.embedLocation;
                 String cachedId=prefs.getString("movieDraft:"+created.sourceSignature,null);draft=created;
-                if(cachedId!=null)try{draft=MovieDraft.load(this,cachedId);}catch(Exception e){android.util.Log.w("DaylogMovie","Cached draft unavailable",e);}
-                draft.save(this);prefs.edit().putString("movieDraft:"+created.sourceSignature,draft.id).apply();
+                if(cachedId!=null)try{draft=drafts.load(cachedId);}catch(Exception e){android.util.Log.w("DaylogMovie","Cached draft unavailable",e);}
+                drafts.save(draft);prefs.edit().putString("movieDraft:"+created.sourceSignature,draft.id).apply();
             }
-            if("rendering".equals(draft.status)&&!draft.id.equals(RenderService.activeId)){draft.status="error";draft.error="処理が中断されました。再実行できます。";draft.save(this);}
-            if("saving".equals(draft.status)&&!VideoExporter.isSaving(draft.movie(this))){draft.status="ready";draft.save(this);}
+            if("rendering".equals(draft.status)&&!draft.id.equals(RenderService.activeId)){draft.status="error";draft.error="処理が中断されました。再実行できます。";drafts.save(draft);}
+            if("saving".equals(draft.status)&&!VideoExporter.isSaving(drafts.movie(draft))){draft.status="ready";drafts.save(draft);}
             if(saved!=null){previewIndex=saved.getInt("preview_index",0);previewPosition=saved.getLong("preview_position",0);}
             sourceClips=draft.sourceClips(repository);rebuildPreviewClips();renderScreen();
         }catch(Exception e){android.util.Log.e("DaylogMovie","Could not open draft",e);Toast.makeText(this,"動画の下書きを開けませんでした",Toast.LENGTH_LONG).show();finish();}
@@ -135,9 +136,9 @@ public final class MovieActivity extends ComponentActivity {
         return index>=0&&index<clips.size()&&clips.get(index).renderAudio();
     }
     private void changed(){if(player!=null)player.setVolume(previewAudio.isAudible()&&previewHasAudio()?1:0);draft.status="editing";draft.error="";draft.savedUri="";queuePersist();updateUi();}
-    private void rebuildPreviewClips(){previewClips=sourceClips.stream().map(clip->{if(!draft.showText)clip=clip.withCaption("");if(!draft.showPlace)clip=clip.withPlace("");return clip;}).toList();}
+    private void rebuildPreviewClips(){previewClips=draft.displayClips(sourceClips);}
     private void queuePersist(){pendingEdits=true;main.removeCallbacks(saveEdits);main.postDelayed(saveEdits,250);}
-    private boolean persist(){main.removeCallbacks(saveEdits);try{repository.dayCaption(draft.day,draft.caption);draft.save(this);pendingEdits=false;return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
+    private boolean persist(){main.removeCallbacks(saveEdits);try{repository.dayCaption(draft.day,draft.caption);drafts.save(draft);pendingEdits=false;return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
     private void startRender(){if(saving||"rendering".equals(draft.status))return;if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}draft.status="rendering";draft.error="";if(!persist()){draft.status="editing";return;}try{RenderService.activeId=draft.id;ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id));updateUi();}catch(RuntimeException e){RenderService.activeId=null;draft.status="error";draft.error="レンダリングを開始できませんでした";persist();updateUi();}}
     private void refreshSavedCopy(){
         if(draft.savedUri.isEmpty())return;
@@ -145,9 +146,9 @@ public final class MovieActivity extends ComponentActivity {
             if(cursor==null||!cursor.moveToFirst()){draft.savedUri="";persist();updateUi();}
         }catch(RuntimeException e){android.util.Log.w("DaylogMovie","Saved copy unavailable",e);draft.savedUri="";persist();updateUi();}
     }
-    private void refreshState(){if(isFinishing()||pendingEdits)return;try{MovieDraft current=MovieDraft.load(this,draft.id);if(!current.status.equals(draft.status)||!current.savedUri.equals(draft.savedUri)||!java.util.Objects.equals(observedRenderId,RenderService.activeId)){draft=current;updateUi();}else if("rendering".equals(current.status))updateUi();}catch(Exception e){android.util.Log.w("DaylogMovie","Could not read render state",e);}}
+    private void refreshState(){if(isFinishing()||pendingEdits)return;try{MovieDraft current=drafts.load(draft.id);if(!current.status.equals(draft.status)||!current.savedUri.equals(draft.savedUri)||!java.util.Objects.equals(observedRenderId,RenderService.activeId)){draft=current;updateUi();}else if("rendering".equals(current.status))updateUi();}catch(Exception e){android.util.Log.w("DaylogMovie","Could not read render state",e);}}
     private void updateUi(){
-        if(video==null)return;if(foreground&&(RenderService.activeId!=null||"rendering".equals(draft.status)||"saving".equals(draft.status))&&!main.hasCallbacks(poll))main.postDelayed(poll,500);observedRenderId=RenderService.activeId;boolean busy="rendering".equals(draft.status)||observedRenderId!=null,ready=("ready".equals(draft.status)||"saving".equals(draft.status))&&draft.movie(this).isFile();saving="saving".equals(draft.status);
+        if(video==null)return;if(foreground&&(RenderService.activeId!=null||"rendering".equals(draft.status)||"saving".equals(draft.status))&&!main.hasCallbacks(poll))main.postDelayed(poll,500);observedRenderId=RenderService.activeId;boolean busy="rendering".equals(draft.status)||observedRenderId!=null,ready=("ready".equals(draft.status)||"saving".equals(draft.status))&&drafts.movie(draft).isFile();saving="saving".equals(draft.status);
         for(View control:controls)control.setEnabled(!busy&&!saving);render.setVisibility(keyboardVisible&&ready?View.GONE:View.VISIBLE);render.setEnabled(!busy&&!saving);render.setAlpha(busy||saving?.45f:1f);render.setText(busy?"レンダリング中":"レンダリング");save.setVisibility(ready?View.VISIBLE:View.GONE);save.setEnabled(!saving);save.setText(saving?"保存中":draft.savedUri.isEmpty()?"保存":"開く");
         fileNameSection.setVisibility(ready?View.VISIBLE:View.GONE);previewAudio.setVisibility(!busy&&draft.audio?View.VISIBLE:View.GONE);
         state.setText(busy?"レンダリング中":ready?(draft.savedUri.isEmpty()?"レンダリング完了"+(draft.outputResolution.isEmpty()?"":" · "+draft.outputResolution):""):"error".equals(draft.status)?draft.error:"");
@@ -157,7 +158,7 @@ public final class MovieActivity extends ComponentActivity {
         video.setVisibility(View.VISIBLE);boolean missing=player==null;ensurePlayer();
         if(ready){
             captions.setVisibility(View.GONE);
-            if(!showingResult||missing){showingResult=true;player.setMediaItem(MediaItem.fromUri(Uri.fromFile(draft.movie(this))));player.prepare();player.play();}
+            if(!showingResult||missing){showingResult=true;player.setMediaItem(MediaItem.fromUri(Uri.fromFile(drafts.movie(draft))));player.prepare();player.play();}
         }else{
             captions.setVisibility(View.VISIBLE);
             if(showingResult||missing){
@@ -174,6 +175,6 @@ public final class MovieActivity extends ComponentActivity {
     private void saveToPhone(){if(saving||!"ready".equals(draft.status)||!draft.savedUri.isEmpty())return;String name;
         try{name=VideoExporter.fileName(draft.fileName);}catch(IllegalArgumentException e){fileNameInput.setError("保存名を確認してください");fileNameInput.requestFocus();return;}
         if(!name.equals(draft.fileName)){draft.fileName=name;fileNameInput.setText(name);}
-        saving=true;draft.status="saving";if(!persist()){saving=false;draft.status="ready";return;}updateUi();exporter.saveRendered(draft.movie(this),name,new VideoExporter.Listener(){@Override public void saved(Uri uri){saving=false;draft.status="ready";draft.savedUri=uri.toString();persist();if(!isDestroyed())updateUi();}@Override public void error(String message){saving=false;draft.status="ready";persist();if(!isDestroyed()){updateUi();toast(message);}}});}
+        saving=true;draft.status="saving";if(!persist()){saving=false;draft.status="ready";return;}updateUi();exporter.saveRendered(drafts.movie(draft),name,new VideoExporter.Listener(){@Override public void saved(Uri uri){saving=false;draft.status="ready";draft.savedUri=uri.toString();persist();if(!isDestroyed())updateUi();}@Override public void error(String message){saving=false;draft.status="ready";persist();if(!isDestroyed()){updateUi();toast(message);}}});}
     private void toast(String message){if(!isDestroyed())Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
 }
