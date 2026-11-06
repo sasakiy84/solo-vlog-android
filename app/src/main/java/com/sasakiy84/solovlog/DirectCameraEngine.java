@@ -10,6 +10,7 @@ import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.location.Location;
 import android.media.MediaRecorder;
+import android.media.MediaCodec;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -47,6 +48,8 @@ final class DirectCameraEngine {
     private CameraCharacteristics source,parent;
     private Surface previewSurface;
     private MediaRecorder recorder;
+    private Surface recordingSurface;
+    private boolean persistentDisabled;
     private File output;
     private ViewfinderView viewfinder;
     private ViewfinderSurfaceSession previewSession;
@@ -78,7 +81,7 @@ final class DirectCameraEngine {
         if(!recording||closed)return;
         long span=lastSensorTime-firstSensorTime;
         float progress=firstSensorTime==0?0:Math.min(.95f,span/(seconds*1_000_000_000f));
-        callback(()->listener.progress(progress,false));
+        if(firstSensorTime!=0)callback(()->listener.progress(progress,false));
         if(SystemClock.elapsedRealtime()-started>seconds*1000L+20000)fail("録画フレームが届きませんでした",null);
         else worker.postDelayed(this,40);
     }};
@@ -148,7 +151,7 @@ final class DirectCameraEngine {
         if(closed)return;
         try{
             manager.openCamera(route.cameraId(),context.getMainExecutor(),new CameraDevice.StateCallback(){
-                public void onOpened(CameraDevice camera){if(closed){camera.close();return;}worker.post(()->{if(closed){camera.close();return;}device=camera;configure(false);});}
+                public void onOpened(CameraDevice camera){if(closed){camera.close();return;}worker.post(()->{if(closed){camera.close();return;}device=camera;prepareRecordingSurface();configure(false);});}
                 public void onDisconnected(CameraDevice camera){camera.close();if(!closed)worker.post(()->fail("カメラが切断されました",null));}
                 public void onError(CameraDevice camera,int error){camera.close();if(!closed)worker.post(()->{
                     if((error==ERROR_CAMERA_IN_USE||error==ERROR_MAX_CAMERAS_IN_USE)&&openRetries++<3){opening=false;event("openRetry","error="+error);worker.postDelayed(DirectCameraEngine.this::open,700);}
@@ -169,14 +172,15 @@ final class DirectCameraEngine {
         try{
             List<OutputConfiguration> outputs=new ArrayList<>();
             if(!record||!route.recordOnly()){OutputConfiguration preview=new OutputConfiguration(previewSurface);if(route.physicalId()!=null)preview.setPhysicalCameraId(route.physicalId());outputs.add(preview);}
-            if(record){OutputConfiguration video=new OutputConfiguration(recorder.getSurface());if(route.physicalId()!=null)video.setPhysicalCameraId(route.physicalId());outputs.add(video);}
+            if(record||recordingSurface!=null){OutputConfiguration video=new OutputConfiguration(recordingSurface!=null?recordingSurface:recorder.getSurface());if(route.physicalId()!=null)video.setPhysicalCameraId(route.physicalId());outputs.add(video);}
             device.createCaptureSession(new SessionConfiguration(SessionConfiguration.SESSION_REGULAR,outputs,context.getMainExecutor(),new CameraCaptureSession.StateCallback(){
                 public void onConfigured(CameraCaptureSession configured){
                     if(closed||generation!=sessionGeneration){configured.close();return;}
                     worker.post(()->{
                         if(closed||generation!=sessionGeneration){configured.close();return;}session=configured;
                         try{
-                            request=device.createCaptureRequest(record?CameraDevice.TEMPLATE_RECORD:CameraDevice.TEMPLATE_PREVIEW);if(!record||!route.recordOnly())request.addTarget(previewSurface);if(record)request.addTarget(recorder.getSurface());
+                            request=device.createCaptureRequest(record||recordingSurface!=null?CameraDevice.TEMPLATE_RECORD:CameraDevice.TEMPLATE_PREVIEW);if(!record||!route.recordOnly())request.addTarget(previewSurface);if(record)request.addTarget(recordingSurface!=null?recordingSurface:recorder.getSurface());
+                            request.setTag(record);
                             request.set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO);
                             int[] distortionModes=source.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES);
                             if(route.lensCorrection()>=0&&distortionModes!=null&&Arrays.stream(distortionModes).anyMatch(mode->mode==route.lensCorrection()))request.set(CaptureRequest.DISTORTION_CORRECTION_MODE,route.lensCorrection());
@@ -194,21 +198,57 @@ final class DirectCameraEngine {
                                 @Override public void onCaptureBufferLost(CameraCaptureSession s,CaptureRequest r,Surface target,long frame){if(!closed&&generation==sessionGeneration&&captureFailures++<5)event("captureBufferLost","target="+(target==previewSurface?"preview":"recording")+", frame="+frame);}
                                 public void onCaptureCompleted(CameraCaptureSession s,CaptureRequest r,TotalCaptureResult result){
                                     if(closed||generation!=sessionGeneration)return;
-                                    if(record){Long timestamp=result.get(CaptureResult.SENSOR_TIMESTAMP);if(timestamp!=null){if(firstSensorTime==0){firstSensorTime=timestamp;capturedAt=System.currentTimeMillis();}lastSensorTime=timestamp;recordedFrames++;}}
+                                    if(recording&&(recordingSurface==null||Boolean.TRUE.equals(r.getTag()))){Long timestamp=result.get(CaptureResult.SENSOR_TIMESTAMP);if(timestamp!=null){if(firstSensorTime==0){firstSensorTime=timestamp;capturedAt=System.currentTimeMillis();}lastSensorTime=timestamp;recordedFrames++;}}
                                     if(first)return;first=true;
                                     event("captureResult","physical="+result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)+", zoom="+result.get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+result.get(CaptureResult.SCALER_CROP_REGION)+", videoStabilization="+result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)+", rotateAndCrop="+result.get(CaptureResult.SCALER_ROTATE_AND_CROP)+", distortionCorrection="+result.get(CaptureResult.DISTORTION_CORRECTION_MODE));
                                     for(var physical:result.getPhysicalCameraResults().entrySet())event("physicalCaptureResult",physical.getKey()+": zoom="+physical.getValue().get(CaptureResult.CONTROL_ZOOM_RATIO)+", crop="+physical.getValue().get(CaptureResult.SCALER_CROP_REGION));
-                                    if(!record){worker.removeCallbacks(timeout);opening=false;ready=true;publishZoom();callback(()->listener.ready());}
+                                    if(!record&&!busy){worker.removeCallbacks(timeout);opening=false;ready=true;publishZoom();callback(()->listener.ready());}
                                 }
                             };session.setRepeatingRequest(request.build(),captureCallback,worker);
-                            if(record){firstSensorTime=0;lastSensorTime=0;recordedFrames=0;recorder.start();recording=true;worker.removeCallbacks(timeout);capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();event("recording",videoSize+", orientationHint="+rotation);worker.post(tick);}
-                        }catch(Exception e){if(record)retryRecording(e);else fail("プレビューを開始できませんでした",e);}
+                            if(record)beginRecording();
+                        }catch(Exception e){if(record)retryRecording(e);else previewFailed("プレビューを開始できませんでした",e);}
                     });
                 }
-                public void onConfigureFailed(CameraCaptureSession failed){failed.close();if(!closed&&generation==sessionGeneration)worker.post(()->{if(record)retryRecording(new IllegalStateException("Session configuration failed"));else fail("このカメラの映像を表示できませんでした",null);});}
+                public void onConfigureFailed(CameraCaptureSession failed){failed.close();if(!closed&&generation==sessionGeneration)worker.post(()->{if(record)retryRecording(new IllegalStateException("Session configuration failed"));else previewFailed("このカメラの映像を表示できませんでした",new IllegalStateException("Session configuration failed"));});}
             }));
-        }catch(Exception e){if(record)retryRecording(e);else fail("カメラの構成に失敗しました",e);}
+        }catch(Exception e){if(record)retryRecording(e);else previewFailed("カメラの構成に失敗しました",e);}
     }
+    private void previewFailed(String message,Exception error){
+        if(recordingSurface==null){fail(message,error);return;}
+        event("persistentSurfaceFallback",error.toString());persistentDisabled=true;
+        if(session!=null){session.close();session=null;}++sessionGeneration;
+        releaseRecordingSurface();configure(false);
+    }
+    // Allocate the encoder buffers before opening the preview session. Merely creating a
+    // persistent Surface does not set its dimensions; MediaRecorder.prepare() does that.
+    private void prepareRecordingSurface(){
+        if(route.recordOnly()||persistentDisabled||recordingSurface!=null)return;
+        File scratch=null;MediaRecorder warmup=null;
+        try{
+            warmup=new MediaRecorder(context);
+            recordingSurface=MediaCodec.createPersistentInputSurface();
+            scratch=File.createTempFile("camera-warmup-",".mp4",context.getCacheDir());
+            warmup.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+            warmup.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            warmup.setOutputFile(scratch.getAbsolutePath());
+            configureVideo(warmup);warmup.setInputSurface(recordingSurface);warmup.prepare();
+            event("persistentSurfaceReady",videoSize.toString());
+        }catch(Exception e){persistentDisabled=true;releaseRecordingSurface();event("persistentSurfaceFallback",e.toString());}
+        finally{if(warmup!=null)warmup.release();if(scratch!=null)scratch.delete();}
+    }
+    private void configureVideo(MediaRecorder target){
+        target.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+        target.setVideoSize(videoSize.getWidth(),videoSize.getHeight());target.setVideoFrameRate(30);
+        target.setVideoEncodingBitRate(videoSize.getWidth()>=3840?60_000_000:videoSize.getWidth()>=1920?24_000_000:12_000_000);
+    }
+    private void beginRecording() throws CameraAccessException {
+        firstSensorTime=0;lastSensorTime=0;recordedFrames=0;
+        recorder.start();recording=true;worker.removeCallbacks(timeout);
+        if(recordingSurface!=null){request.addTarget(recordingSurface);request.setTag(true);session.setRepeatingRequest(request.build(),captureCallback,worker);}
+        capturedAt=System.currentTimeMillis();started=SystemClock.elapsedRealtime();
+        event("recording",videoSize+", orientationHint="+rotation+", reusedSession="+(recordingSurface!=null));worker.post(tick);
+    }
+    private void releaseRecordingSurface(){if(recordingSurface!=null){recordingSurface.release();recordingSurface=null;}}
     private volatile int exposureIndex;
     private volatile float initialExposure;
     void initialExposure(float ev){initialExposure=ev;var state=exposure();if(state.supported())setExposure(Math.round(ev/state.step()));}
@@ -252,19 +292,22 @@ final class DirectCameraEngine {
             boolean sound=audio&&ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
             if(sound)recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);recorder.setOutputFile(output.getAbsolutePath());
-            recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);recorder.setVideoSize(videoSize.getWidth(),videoSize.getHeight());recorder.setVideoFrameRate(30);
-            recorder.setVideoEncodingBitRate(videoSize.getWidth()>=3840?60_000_000:videoSize.getWidth()>=1920?24_000_000:12_000_000);
+            configureVideo(recorder);if(recordingSurface!=null)recorder.setInputSurface(recordingSurface);
             if(sound){recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);recorder.setAudioEncodingBitRate(128000);recorder.setAudioSamplingRate(48000);}
             recorder.setMaxDuration(seconds*1000+150);maxDurationReached=false;
             recorder.setOnInfoListener((r,what,extra)->{if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED)worker.post(()->{if(recorder==r&&recording){maxDurationReached=true;event("encodedDurationLimit","durationMs="+(seconds*1000+150));finishRecording(true);}});});
             recorder.setOrientationHint(rotation);if(location!=null)recorder.setLocation((float)location.getLatitude(),(float)location.getLongitude());
             recorder.setOnErrorListener((r,what,extra)->worker.post(()->{if(recorder==r&&recording)fail("撮影中にエラーが発生しました（"+what+"）",null);}));
-            recorder.prepare();worker.removeCallbacks(timeout);worker.postDelayed(timeout,20000);configure(true);
+            recorder.prepare();worker.removeCallbacks(timeout);worker.postDelayed(timeout,20000);
+            if(recordingSurface!=null)beginRecording();else configure(true);
         }catch(Exception e){retryRecording(e);}
     }
     private void retryRecording(Exception error){
-        event("recordingConfigurationError",videoSize+": "+error);releaseRecorder();
+        event("recordingConfigurationError",videoSize+": "+error);
+        boolean usedPersistent=recordingSurface!=null;
+        if(session!=null){session.close();session=null;}++sessionGeneration;releaseRecorder();releaseRecordingSurface();persistentDisabled=true;
         if(closed||!busy)return;
+        if(usedPersistent){prepareRecording();return;}
         if(++sizeIndex<sizes.size()){videoSize=sizes.get(sizeIndex);prepareRecording();}else fail("このカメラで動画を撮影できませんでした",error);
     }
     void stop(){worker.post(()->{
@@ -274,7 +317,7 @@ final class DirectCameraEngine {
         if(!recording)return;
         worker.removeCallbacks(tick);worker.removeCallbacks(timeout);
         File finished=output;long at=capturedAt;boolean success=false;event("recordingFrames","count="+recordedFrames+", sensorDurationMs="+(lastSensorTime-firstSensorTime)/1_000_000L);
-        try{if(session!=null){session.stopRepeating();session.abortCaptures();}}catch(Exception e){event("stopStreamError",e.toString());}
+        try{if(session!=null){if(recordingSurface!=null){request.removeTarget(recordingSurface);request.setTag(false);session.setRepeatingRequest(request.build(),captureCallback,worker);}else{session.stopRepeating();session.abortCaptures();}}}catch(Exception e){event("stopStreamError",e.toString());}
         try{recorder.stop();success=true;}
         catch(RuntimeException e){event("recordingStopError",e.toString());if(maxDurationReached){releaseRecorder();
             try(android.media.MediaMetadataRetriever media=new android.media.MediaMetadataRetriever()){media.setDataSource(finished.getAbsolutePath());success=Long.parseLong(media.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION))>=seconds*1000L-200;}
@@ -283,13 +326,13 @@ final class DirectCameraEngine {
         recording=false;busy=false;releaseRecorder();
         if(success){event("recorded","bytes="+finished.length());main.post(()->listener.saved(finished,at));}
         else{if(finished!=null)finished.delete();callback(()->listener.error("動画を保存できませんでした"));}
-        if(resume&&!closed){ready=false;callback(()->listener.binding());configure(false);}
+        if(resume&&!closed&&recordingSurface==null){ready=false;callback(()->listener.binding());configure(false);}
     }
     private void releaseRecorder(){if(recorder!=null){try{recorder.reset();}catch(RuntimeException e){event("recorderResetError",e.toString());}recorder.release();recorder=null;}recording=false;}
     private void fail(String message,Exception error){
         if(closed)return;boolean wasBusy=busy;worker.removeCallbacks(arm);worker.removeCallbacks(timeout);worker.removeCallbacks(tick);ready=false;opening=false;busy=false;
         event("error",message+(error==null?"":": "+error));
-        if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releasePreview();if(output!=null)output.delete();
+        if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releaseRecordingSurface();releasePreview();if(output!=null)output.delete();
         callback(()->{listener.binding();listener.error(message);});
         if(wasBusy&&!closed)worker.postDelayed(this::open,500);
     }
@@ -297,7 +340,7 @@ final class DirectCameraEngine {
         if(closed)return;closed=true;ready=false;
         main.post(()->{if(surfaceFuture!=null)surfaceFuture.cancel(false);});
         worker.post(()->{worker.removeCallbacksAndMessages(null);boolean pending=busy&&!recording;if(recording)finishRecording(false);busy=false;++sessionGeneration;
-            if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releasePreview();
+            if(session!=null){session.close();session=null;}if(device!=null){device.close();device=null;}releaseRecorder();releaseRecordingSurface();releasePreview();
             if(pending&&output!=null)output.delete();thread.quitSafely();});
     }
     private void callback(Runnable action){main.post(()->{if(!closed)action.run();});}

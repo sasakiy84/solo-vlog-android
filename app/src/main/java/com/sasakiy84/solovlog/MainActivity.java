@@ -343,7 +343,7 @@ public final class MainActivity extends ComponentActivity {
         if(preparing){label.setAlpha(1);label.setVisibility(View.VISIBLE);}
         else{
             // Keep layout stable while camera/encoder startup is competing for the first frame.
-            label.animate().alpha(0).setDuration(100).withLayer().withEndAction(()->{
+            label.animate().alpha(0).setDuration(100).withEndAction(()->{
                 if(preparingLabel==label&&!preparingShown)label.setVisibility(View.INVISIBLE);
             }).start();
         }
