@@ -682,10 +682,24 @@ public final class MainActivity extends ComponentActivity {
         content.addView(settingToggle("撮影時刻を表示",prefs.getBoolean("showTime",true),()->{prefs.edit().putBoolean("showTime",!prefs.getBoolean("showTime",true)).apply();renderSettingsBody();}));gap(content,1);
         content.addView(settingToggle("音声",sound(),this::toggleSound));gap(content,1);
         content.addView(settingToggle("グリッド",prefs.getBoolean("grid",true),()->{prefs.edit().putBoolean("grid",!prefs.getBoolean("grid",true)).apply();renderSettingsBody();}));gap(content,32);
-        content.addView(settingToggle("撮影リマインダー（1時間ごと）",prefs.getBoolean("hourlyReminder",false)&&AppNotifications.allowed(this),()->{
-            if(prefs.getBoolean("hourlyReminder",false)&&AppNotifications.allowed(this)){prefs.edit().putBoolean("hourlyReminder",false).apply();AppNotifications.scheduleReminder(this);renderSettingsBody();}
-            else notificationAccess.request(()->{prefs.edit().putBoolean("hourlyReminder",true).putLong("nextCaptureReminder",System.currentTimeMillis()+60*60*1000L).apply();AppNotifications.scheduleReminder(this);renderSettingsBody();});
-        }));gap(content,24);
+        String[] reminderLabels={"なし","1時間ごと","4時間ごと","12時間ごと","24時間ごと"};
+        int[] reminderHours={0,1,4,12,24};
+        int currentReminder=AppNotifications.allowed(this)?AppNotifications.reminderHours(this):0;
+        int reminderIndex=0;for(int i=0;i<reminderHours.length;i++)if(reminderHours[i]==currentReminder)reminderIndex=i;
+        LinearLayout reminder=preferenceRow("撮影リマインダー",reminderLabels[reminderIndex]);
+        reminder.getChildAt(reminder.getChildCount()-1).setRotation(90);
+        reminder.setFocusable(true);reminder.setContentDescription("撮影リマインダー "+reminderLabels[reminderIndex]);
+        reminder.setOnClickListener(v->{
+            android.widget.PopupMenu menu=new android.widget.PopupMenu(this,reminder,Gravity.END);
+            for(int i=0;i<reminderHours.length;i++)menu.getMenu().add(0,reminderHours[i],i,reminderLabels[i]).setChecked(reminderHours[i]==currentReminder);
+            menu.getMenu().setGroupCheckable(0,true,true);
+            menu.setOnMenuItemClickListener(item->{
+                int hours=item.getItemId();
+                Runnable save=()->{AppNotifications.setReminderHours(this,hours);renderSettingsBody();};
+                if(hours==0)save.run();else notificationAccess.request(save);
+                return true;
+            });menu.show();
+        });content.addView(reminder);gap(content,24);
         content.addView(bold("ストレージ",14,Ui.INK));gap(content,12);
         content.addView(text(repository.all().size()+"本 · "+String.format(Locale.JAPAN,"%.1f MB",(repository.bytes()+drafts.bytes())/1048576f),14,Ui.MUTED));gap(content,12);
         content.addView(button("3日より前の動画を削除",false,this::deleteOldClips),lp(-1,48));gap(content,12);
