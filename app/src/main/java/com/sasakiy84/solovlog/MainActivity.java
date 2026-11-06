@@ -695,6 +695,7 @@ public final class MainActivity extends ComponentActivity {
             menu.getMenu().setGroupCheckable(0,true,true);
             menu.setOnMenuItemClickListener(item->{
                 int hours=item.getItemId();
+                if(hours>0&&hours==AppNotifications.reminderHours(this)&&AppNotifications.allowed(this))return true;
                 Runnable save=()->{AppNotifications.setReminderHours(this,hours);renderSettingsBody();};
                 if(hours==0)save.run();else notificationAccess.request(save);
                 return true;
