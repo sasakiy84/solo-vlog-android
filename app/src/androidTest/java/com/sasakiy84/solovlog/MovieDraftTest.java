@@ -49,4 +49,30 @@ public final class MovieDraftTest {
             directory.delete();
         }
     }
+    @Test public void weeklyDraftKeepsEachDayCaptionAndItsLastDayDuringCleanup() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File directory=Files.createTempDirectory(context.getCacheDir().toPath(),"week-").toFile();
+        MovieDraftStore store=new MovieDraftStore(directory);
+        MovieDraft draft=new MovieDraft(UUID.randomUUID().toString());
+        draft.day="2026-12-28";draft.days=7;draft.dayBoundary=240;draft.caption="Winter";
+        draft.dayCaptions.put("2026-12-28","Tokyo");draft.dayCaptions.put("2026-12-29","Kyoto");
+        Clip monday=new Clip(UUID.randomUUID().toString(),java.time.Instant.parse("2026-12-28T12:00:00Z").toEpochMilli(),2000,2,false,true,"UTC");
+        Clip earlyTuesday=new Clip(UUID.randomUUID().toString(),java.time.Instant.parse("2026-12-29T02:00:00Z").toEpochMilli(),2000,2,false,true,"UTC");
+        Clip tuesday=new Clip(UUID.randomUUID().toString(),java.time.Instant.parse("2026-12-29T12:00:00Z").toEpochMilli(),2000,2,false,true,"UTC");
+        try {
+            store.save(draft);Files.write(store.movie(draft).toPath(),new byte[]{1});
+            MovieDraft restored=store.load(draft.id);
+            assertEquals("Winter\nTokyo",restored.captionFor(monday));
+            assertEquals("Winter\nTokyo",restored.captionFor(earlyTuesday));
+            assertEquals("Winter\nKyoto",restored.captionFor(tuesday));
+            restored.caption="";assertEquals("Kyoto",restored.captionFor(tuesday));
+            store.deleteBefore(java.time.LocalDate.of(2027,1,3));
+            assertTrue(store.movie(draft).exists());
+            store.deleteBefore(java.time.LocalDate.of(2027,1,4));
+            assertFalse(store.movie(draft).exists());
+        } finally {
+            for(File file:directory.listFiles())file.delete();directory.delete();
+        }
+    }
+
 }

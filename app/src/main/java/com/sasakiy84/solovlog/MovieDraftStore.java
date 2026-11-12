@@ -44,6 +44,14 @@ final class MovieDraftStore {
         draft.sourceSignature = data.optString("sourceSignature");
         draft.day = data.getString("day");
         draft.caption = data.optString("caption");
+        draft.days = data.optInt("days",1);
+        draft.dayBoundary = data.optInt("dayBoundary",240);
+        if((draft.days!=1&&draft.days!=7)||draft.dayBoundary<0||draft.dayBoundary>=1440)throw new IllegalArgumentException("Invalid render period");
+        JSONObject captions=data.optJSONObject("dayCaptions");
+        if(captions!=null){
+            var dates=captions.keys();
+            while(dates.hasNext()){String date=dates.next();LocalDate.parse(date);draft.dayCaptions.put(date,captions.getString(date));}
+        }
         draft.status = data.optString("status", "editing");
         draft.error = data.optString("error");
         draft.savedUri = data.optString("savedUri");
@@ -69,6 +77,9 @@ final class MovieDraftStore {
             .put("fileName", draft.fileName)
             .put("sourceSignature", draft.sourceSignature)
             .put("day", draft.day)
+            .put("days", draft.days)
+            .put("dayBoundary", draft.dayBoundary)
+            .put("dayCaptions", new JSONObject(draft.dayCaptions))
             .put("caption", draft.caption)
             .put("status", draft.status)
             .put("error", draft.error)
@@ -108,7 +119,7 @@ final class MovieDraftStore {
             LocalDate day;
             try {
                 JSONObject data = new JSONObject(new String(new AtomicFile(file).readFully(), StandardCharsets.UTF_8));
-                day = LocalDate.parse(data.getString("day"));
+                day = LocalDate.parse(data.getString("day")).plusDays(data.optInt("days",1)-1);
             } catch (Exception e) {
                 android.util.Log.w("DaylogDraft", "Cannot read old render date", e);
                 continue;

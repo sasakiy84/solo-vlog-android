@@ -50,7 +50,7 @@ final class CaptionOverlay implements GlEffect {
         Label clock=null,heading=null,caption=null,place=null;
         float available=w*.9f;
         if(showTime||showDate){
-            String timestamp=(showDate?JournalRules.captureDate(clip):"")+(showDate&&showTime?"\n":"")+(showTime?JournalRules.captureTime(clip):"");
+            String timestamp=JournalRules.captureTimestamp(clip,showTime,showDate);
             Bitmap mask=mask(timestamp,edge*.051f,Math.round(available),2,Layout.Alignment.ALIGN_OPPOSITE);
             clock=new Label(mask,w-marginX-mask.getWidth(),h-marginY-mask.getHeight());
             available-=mask.getWidth()+edge*.04f;

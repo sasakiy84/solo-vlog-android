@@ -60,6 +60,26 @@ public final class JournalRulesTest {
         Clip newYork=new Clip("b",instant,2000,2,false,true,"America/New_York");
         assertEquals(List.of(tokyo),JournalRules.clipsFor(List.of(tokyo,newYork),LocalDate.of(2026,10,30),false,240,false));
     }
+    @Test public void weekCrossesYearAndUsesConfiguredDayBoundary(){
+        LocalDate start=JournalRules.weekStart(LocalDate.of(2027,1,3));
+        assertEquals(LocalDate.of(2026,12,28),start);
+        Clip before=new Clip("before",at("2026-12-28T03:59:59"),2000,2,false,true,TOKYO.getId());
+        Clip first=new Clip("first",at("2026-12-28T04:00:00"),2000,2,false,true,TOKYO.getId());
+        Clip last=new Clip("last",at("2027-01-04T03:59:59"),2000,2,true,false,TOKYO.getId());
+        Clip after=new Clip("after",at("2027-01-04T04:00:00"),2000,2,false,true,TOKYO.getId());
+        assertEquals(List.of(first,last),JournalRules.clipsBetween(List.of(after,last,before,first),start,start.plusDays(7),240));
+        assertTrue(JournalRules.clipsBetween(List.of(),start,start.plusDays(7),240).isEmpty());
+    }
+    @Test public void weekdayUsesRecordedTimezoneAndTrimStartRatherThanDiaryDay(){
+        Clip tokyo=new Clip("a",at("2026-10-31T03:40:00"),2000,2,false,true,TOKYO.getId());
+        assertEquals("Sat 03:40",JournalRules.captureTimestamp(tokyo,true,false));
+        Clip utc=new Clip("b",tokyo.capturedAt(),2000,2,false,true,"UTC");
+        assertEquals("2026.10.30 Fri\n18:40",JournalRules.captureTimestamp(utc,true,true));
+        assertEquals("2026.10.31 Sat",JournalRules.captureTimestamp(tokyo,false,true));
+        assertEquals("",JournalRules.captureTimestamp(tokyo,false,false));
+        Clip midnight=new Clip("c",at("2026-11-01T23:59:59"),3000,3,false,true,TOKYO.getId()).withTrim(1500,3000);
+        assertEquals("Mon 00:00",JournalRules.captureTimestamp(midnight,true,false));
+    }
     @Test public void selectedFormatHandlesPortraitAndLandscapeNativeSensors(){
         assertEquals(1,JournalRules.targetRotation(90,true));
         assertEquals(0,JournalRules.targetRotation(90,false));

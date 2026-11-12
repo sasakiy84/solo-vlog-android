@@ -91,6 +91,7 @@ public final class MainActivity extends ComponentActivity {
     private int selectedSeconds=2;
     private Clip retakeClip;
     private LocalDate selectedDay;
+    private boolean journalWeekly;
     private boolean journalLandscape;
     private Clip lastSaved;
 
@@ -127,6 +128,7 @@ public final class MainActivity extends ComponentActivity {
             screen=Screen.valueOf(state.getString("screen","CAMERA"));
             settingsReturn=Screen.valueOf(state.getString("return","CAMERA"));
             selectedDay=LocalDate.parse(state.getString("day",today().toString()));
+            journalWeekly=state.getBoolean("journal_weekly",false);
             journalLandscape=state.getBoolean("journalLandscape",landscape());
         }
         applyOrientation();
@@ -202,7 +204,7 @@ public final class MainActivity extends ComponentActivity {
     @Override public void onSaveInstanceState(Bundle state){
         state.putString("screen",screen.name());state.putString("return",settingsReturn.name());
         if(retakeClip!=null)state.putString("retake_clip",retakeClip.id());
-        state.putString("day",selectedDay.toString());state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
+        state.putString("day",selectedDay.toString());state.putBoolean("journal_weekly",journalWeekly);state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
     }
     private int dp(float value){return Ui.dp(this,value);}
     private boolean landscape(){return retakeClip!=null?retakeClip.landscape():orientationFor(today());}
@@ -480,42 +482,69 @@ public final class MainActivity extends ComponentActivity {
         toolbar("日々の記録",()->navigate(Screen.CAMERA),true);
         LinearLayout content=scrollBody();
         List<Clip> all=repository.all();
+        LocalDate rangeStart=journalWeekly?JournalRules.weekStart(selectedDay):selectedDay;
+        LinearLayout period=row();
+        for(boolean weekly:new boolean[]{false,true}){
+            TextView mode=button(weekly?"1週間":"1日",journalWeekly==weekly,()->{journalWeekly=weekly;render();});
+            mode.setSelected(journalWeekly==weekly);LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(0,dp(40),1);size.setMargins(0,0,dp(8),0);period.addView(mode,size);
+        }
+        content.addView(period);gap(content,12);
         TreeSet<LocalDate> days=new TreeSet<>(Comparator.reverseOrder());days.add(today());
         for(Clip clip:all)days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
+        days.add(selectedDay);if(journalWeekly)for(int i=0;i<7;i++)days.add(rangeStart.plusDays(i));
+        TextView activeDate=null;
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
-            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,date.equals(selectedDay)?Ui.ON_PRIMARY:Ui.MUTED);
-            chip.setGravity(Gravity.CENTER);Ui.touch(chip,date.equals(selectedDay)?Ui.PRIMARY:Ui.CARD,10);
+            boolean anchor=date.equals(selectedDay),inRange=journalWeekly&&!date.isBefore(rangeStart)&&date.isBefore(rangeStart.plusDays(7));
+            TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,anchor?Ui.ON_PRIMARY:inRange?Ui.BRAND:Ui.MUTED);
+            chip.setGravity(Gravity.CENTER);Ui.touch(chip,anchor?Ui.BRAND:inRange?0xFFF7E5D9:Ui.CARD,10);
+            chip.setSelected(anchor||inRange);chip.setContentDescription(date+((anchor||inRange)?" 選択中":""));if(anchor)activeDate=chip;
             LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);
+        TextView focusDate=activeDate;dates.post(()->{if(focusDate!=null)dates.scrollTo(Math.max(0,focusDate.getLeft()-dp(90)),0);});
+        if(journalWeekly){content.addView(text(rangeStart.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))+" – "+rangeStart.plusDays(6).format(DateTimeFormatter.ofPattern("yyyy.MM.dd")),14,Ui.MUTED));gap(content,8);}
         journalLandscape=JournalRules.orientationFor(all,selectedDay,boundary(),prefs.getBoolean("landscape",false));
-        List<Clip> list=JournalRules.clipsFor(all,selectedDay,journalLandscape,boundary(),false),selected=list.stream().filter(Clip::included).toList();
+        List<Clip> list=journalWeekly?JournalRules.clipsBetween(all,rangeStart,rangeStart.plusDays(7),boundary()):JournalRules.clipsFor(all,selectedDay,journalLandscape,boundary(),false);
+        List<Clip> selected=list.stream().filter(Clip::included).toList();
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
         LinearLayout summary=row();
         TextView count=bold(seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView save=button("レンダリング","library",true,()->export(selected,selectedDay.toString(),journalLandscape));
+        TextView save=button("レンダリング","library",true,()->{if(journalWeekly)exportWeek(selected,rangeStart);else export(selected,selectedDay.toString(),journalLandscape);});
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);Ui.touch(save,Ui.BRAND,10);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
-        List<Clip> other=JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
+        List<Clip> other=journalWeekly?List.of():JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
         int columns=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?3:2;
-        for(int index=0;index<list.size();index+=columns){
+        if(journalWeekly){
+            java.util.Map<LocalDate,List<Clip>> groups=new java.util.TreeMap<>();
+            for(Clip clip:list){
+                LocalDate date=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId()));
+                groups.computeIfAbsent(date,ignored->new ArrayList<>()).add(clip);
+            }
+            for(var entry:groups.entrySet()){
+                content.addView(bold(entry.getKey().format(DateTimeFormatter.ofPattern("MM.dd EEE",Locale.ENGLISH)),15,Ui.INK));gap(content,12);
+                clipRows(content,entry.getValue(),columns);
+            }
+        }else clipRows(content,list,columns);
+        for(Clip clip:other){TextView retained=button(clipTime(clip)+" · "+(clip.landscape()?"横":"縦"),false,()->review(clip));content.addView(retained,lp(-1,48));}
+        TextView capture=button("撮影する","camera",true,()->navigate(Screen.CAMERA));Ui.touch(capture,Ui.BRAND,10);LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
+    }
+    private void clipRows(LinearLayout content,List<Clip> clips,int columns){
+        for(int index=0;index<clips.size();index+=columns){
             LinearLayout cards=row();cards.setGravity(Gravity.TOP);
             for(int n=0;n<columns;n++){
                 LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,-2,1);params.setMargins(n==0?0:dp(10),0,0,dp(14));
-                cards.addView(index+n<list.size()?clipCard(list.get(index+n)):new View(this),params);
+                cards.addView(index+n<clips.size()?clipCard(clips.get(index+n)):new View(this),params);
             }
             content.addView(cards);
         }
-        for(Clip clip:other){TextView retained=button(clipTime(clip)+" · "+(clip.landscape()?"横":"縦"),false,()->review(clip));content.addView(retained,lp(-1,48));}
-        TextView capture=button("撮影する","camera",true,()->navigate(Screen.CAMERA));Ui.touch(capture,Ui.BRAND,10);LinearLayout.LayoutParams params=lp(-1,54);params.setMargins(dp(22),dp(8),dp(22),dp(12));root.addView(capture,params);
     }
     private View clipCard(Clip clip){
         LinearLayout card=column();FrameLayout frame=new FrameLayout(this);frame.setBackground(Ui.rounded(this,Ui.CARD,10));frame.setClipToOutline(true);
         ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);frame.addView(image,new FrameLayout.LayoutParams(-1,-1));
-        frame.setContentDescription("クリップを選択 "+clipTime(clip)+" "+seconds(JournalRules.exportDuration(clip))+"秒");frame.setFocusable(true);frame.setOnClickListener(v->{repository.include(clip.id(),!clip.included());render();});card.addView(frame,lp(-1,journalLandscape?124:188));
+        frame.setContentDescription("クリップを選択 "+clipTime(clip)+" "+seconds(JournalRules.exportDuration(clip))+"秒");frame.setFocusable(true);frame.setOnClickListener(v->{repository.include(clip.id(),!clip.included());render();});card.addView(frame,lp(-1,clip.landscape()?124:188));
         frame.setOnLongClickListener(v->{review(clip);return true;});card.setOnLongClickListener(v->{review(clip);return true;});
         Ui.Icon check=new Ui.Icon(this,clip.included()?"check":"unchecked",Ui.INK,clip.included()?"このクリップを動画から除外":"このクリップを動画に含める",()->{repository.include(clip.id(),!clip.included());render();});
         FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);frame.addView(check,cp);check.setOnLongClickListener(v->{review(clip);return true;});
@@ -631,6 +660,18 @@ public final class MainActivity extends ComponentActivity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("場所").setView(form).setPositiveButton("閉じる",null).create();
         dialog.setOnDismissListener(d->{main.removeCallbacks(save);edited[0]=edited[0].withPlace(input.getText().toString());repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices.run();});
         dialog.show();focusEditor(input,dialog);
+    }
+    private void exportWeek(List<Clip> selected,LocalDate start){
+        if(selected.isEmpty()){toast("クリップを選択してください");return;}
+        boolean portrait=selected.stream().anyMatch(clip->!clip.landscape()),wide=selected.stream().anyMatch(Clip::landscape);
+        java.util.function.Consumer<Boolean> open=landscape->{
+            List<Clip> clips=selected.stream().filter(clip->clip.landscape()==landscape).toList();
+            camera.unbind();locations.stop();
+            startActivity(new Intent(this,MovieActivity.class).putStringArrayListExtra("clips",new ArrayList<>(clips.stream().map(Clip::id).toList()))
+                .putExtra("day",start.toString()).putExtra("weekly",true).putExtra("landscape",landscape));
+        };
+        if(portrait&&wide)new AlertDialog.Builder(this).setTitle("動画の向き").setItems(new String[]{"縦の動画","横の動画"},(dialog,which)->open.accept(which==1)).show();
+        else open.accept(wide);
     }
     private void export(List<Clip> selected,String day,boolean horizontal){
         if(selected.isEmpty()){toast("クリップを選択してください");return;}

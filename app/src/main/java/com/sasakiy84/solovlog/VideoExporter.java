@@ -56,7 +56,7 @@ public final class VideoExporter {
 
     public void render(MovieDraft draft,ClipRepository repository,RenderListener listener){
         List<Clip> metadataClips=draft.sourceClips(repository),clips=draft.displayClips(metadataClips);
-        String dayCaption=draft.caption;boolean showTime=draft.showTime,showDate=draft.showDate,includeAudio=draft.audio;
+        boolean showTime=draft.showTime,showDate=draft.showDate,includeAudio=draft.audio;
         if(clips.isEmpty()){listener.error("保存するクリップを選んでください。");return;}
         if(transformer!=null||preparing){listener.error("現在の処理が終わるまでお待ちください。");return;}
         preparing=true;int generation=++renderGeneration;
@@ -65,6 +65,7 @@ public final class VideoExporter {
             try{
                 List<EditedMediaItem> items=new ArrayList<>();boolean highResolution=false;
                 for(Clip clip:clips){
+                    String dayCaption=draft.captionFor(clip);
                     if(generation!=renderGeneration)return;
                     File source=repository.file(clip.id());if(!source.isFile())throw new java.io.FileNotFoundException("Missing source clip");
                     int width,height;
