@@ -60,9 +60,8 @@ public final class JournalRulesTest {
         Clip newYork=new Clip("b",instant,2000,2,false,true,"America/New_York");
         assertEquals(List.of(tokyo),JournalRules.clipsFor(List.of(tokyo,newYork),LocalDate.of(2026,10,30),false,240,false));
     }
-    @Test public void weekCrossesYearAndUsesConfiguredDayBoundary(){
-        LocalDate start=JournalRules.weekStart(LocalDate.of(2027,1,3));
-        assertEquals(LocalDate.of(2026,12,28),start);
+    @Test public void rangeCrossesYearAndUsesConfiguredDayBoundary(){
+        LocalDate start=LocalDate.of(2026,12,28);
         Clip before=new Clip("before",at("2026-12-28T03:59:59"),2000,2,false,true,TOKYO.getId());
         Clip first=new Clip("first",at("2026-12-28T04:00:00"),2000,2,false,true,TOKYO.getId());
         Clip last=new Clip("last",at("2027-01-04T03:59:59"),2000,2,true,false,TOKYO.getId());

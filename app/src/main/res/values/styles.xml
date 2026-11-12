@@ -7,4 +7,23 @@
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#FFFFFF</item>
     </style>
+    <style name="Theme.Flint.Calendar" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">#B64A12</item>
+        <item name="colorPrimaryVariant">#B64A12</item>
+        <item name="colorSecondary">#B64A12</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorOnSurface">#252A30</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorSurfaceContainerHigh">#FFFFFF</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="colorSecondaryContainer">#F7E5D9</item>
+        <item name="colorOnSecondaryContainer">#252A30</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+    </style>
+    <style name="ThemeOverlay.Flint.Calendar" parent="ThemeOverlay.Material3.MaterialCalendar.Fullscreen">
+        <item name="colorPrimary">#B64A12</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+    </style>
 </resources>

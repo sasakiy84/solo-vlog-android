@@ -111,7 +111,7 @@ public final class VideoExporter {
                 context,new DefaultDecoderFactory.Builder(context).setEnableDecoderFallback(true).build(),
                 Clock.DEFAULT,LogSessionId.LOG_SESSION_ID_NONE))
             .setVideoFrameProcessorFactory(new DefaultVideoFrameProcessor.Factory.Builder().setSdrWorkingColorSpace(DefaultVideoFrameProcessor.WORKING_COLOR_SPACE_DEFAULT).build())
-            .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips,draft.caption,draft.embedLocation)))
+            .setMuxerFactory(new InAppMp4Muxer.Factory(entries->LocationMetadata.apply(entries,clips,draft.combined&&draft.useDayCaptions?"":draft.caption,draft.embedLocation)))
             .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(Composition result, ExportResult exportResult) {
                     transformer = null;

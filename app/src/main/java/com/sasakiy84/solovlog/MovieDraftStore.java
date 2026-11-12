@@ -46,7 +46,9 @@ final class MovieDraftStore {
         draft.caption = data.optString("caption");
         draft.days = data.optInt("days",1);
         draft.dayBoundary = data.optInt("dayBoundary",240);
-        if((draft.days!=1&&draft.days!=7)||draft.dayBoundary<0||draft.dayBoundary>=1440)throw new IllegalArgumentException("Invalid render period");
+        draft.combined = data.optBoolean("combined",draft.days>1);
+        draft.useDayCaptions = data.optBoolean("useDayCaptions",true);
+        if(draft.days<1||draft.dayBoundary<0||draft.dayBoundary>=1440)throw new IllegalArgumentException("Invalid render period");
         JSONObject captions=data.optJSONObject("dayCaptions");
         if(captions!=null){
             var dates=captions.keys();
@@ -78,6 +80,8 @@ final class MovieDraftStore {
             .put("sourceSignature", draft.sourceSignature)
             .put("day", draft.day)
             .put("days", draft.days)
+            .put("combined", draft.combined)
+            .put("useDayCaptions", draft.useDayCaptions)
             .put("dayBoundary", draft.dayBoundary)
             .put("dayCaptions", new JSONObject(draft.dayCaptions))
             .put("caption", draft.caption)

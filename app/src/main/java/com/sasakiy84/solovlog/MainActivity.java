@@ -91,9 +91,15 @@ public final class MainActivity extends ComponentActivity {
     private int selectedSeconds=2;
     private Clip retakeClip;
     private LocalDate selectedDay;
-    private boolean journalWeekly;
+    private LocalDate periodStart,periodEnd;
     private boolean journalLandscape;
     private Clip lastSaved;
+
+    private final ActivityResultLauncher<Intent> periodPicker=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
+        if(result.getResultCode()!=RESULT_OK||result.getData()==null)return;
+        periodStart=LocalDate.parse(result.getData().getStringExtra("start"));
+        periodEnd=LocalDate.parse(result.getData().getStringExtra("end"));selectedDay=periodStart;screen=Screen.JOURNAL;render();
+    });
 
     private final ActivityResultLauncher<Intent> trimEditor=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
         if(result.getResultCode()!=RESULT_OK||result.getData()==null)return;
@@ -128,7 +134,7 @@ public final class MainActivity extends ComponentActivity {
             screen=Screen.valueOf(state.getString("screen","CAMERA"));
             settingsReturn=Screen.valueOf(state.getString("return","CAMERA"));
             selectedDay=LocalDate.parse(state.getString("day",today().toString()));
-            journalWeekly=state.getBoolean("journal_weekly",false);
+            if(state.containsKey("period_start")){periodStart=LocalDate.parse(state.getString("period_start"));periodEnd=LocalDate.parse(state.getString("period_end"));}
             journalLandscape=state.getBoolean("journalLandscape",landscape());
         }
         applyOrientation();
@@ -136,12 +142,12 @@ public final class MainActivity extends ComponentActivity {
             @Override public void handleOnBackPressed(){
                 if(captureBusy){stopCapture();return;}
                 if(screen==Screen.SETTINGS)navigate(settingsReturn);
-                else if(screen==Screen.JOURNAL)navigate(Screen.CAMERA);
+                else if(screen==Screen.JOURNAL)leaveJournal();
                 else if(retakeClip!=null){String id=retakeClip.id();retakeClip=null;startActivity(new Intent(MainActivity.this,CaptureEditorActivity.class).putExtra(CaptureEditorActivity.CLIP_ID,id));}
                 else{setEnabled(false);getOnBackPressedDispatcher().onBackPressed();}
             }
         });
-        readReviewIntent(getIntent());if(state!=null)readRetake(state.getString("retake_clip"));render();
+        if(state==null)readReviewIntent(getIntent());if(state!=null)readRetake(state.getString("retake_clip"));render();
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(captureBusy)return;readReviewIntent(intent);render();if(intent.getBooleanExtra("edits_saved",false))toast("保存しました");}
     private void readRetake(String id){
@@ -157,10 +163,11 @@ public final class MainActivity extends ComponentActivity {
         if(intent.getBooleanExtra("open_camera",false)){screen=Screen.CAMERA;return;}
         String day=intent.getStringExtra("review_day");
         if(day!=null){
+            periodStart=null;periodEnd=null;
             try{selectedDay=LocalDate.parse(day);screen=Screen.JOURNAL;}
             catch(java.time.DateTimeException e){android.util.Log.w("Daylog","Invalid review day",e);}
         }else if(intent.getBooleanExtra("review_today",false)){
-            selectedDay=today();screen=Screen.JOURNAL;
+            periodStart=null;periodEnd=null;selectedDay=today();screen=Screen.JOURNAL;
         }
     }
     @Override protected void onResume(){
@@ -204,7 +211,7 @@ public final class MainActivity extends ComponentActivity {
     @Override public void onSaveInstanceState(Bundle state){
         state.putString("screen",screen.name());state.putString("return",settingsReturn.name());
         if(retakeClip!=null)state.putString("retake_clip",retakeClip.id());
-        state.putString("day",selectedDay.toString());state.putBoolean("journal_weekly",journalWeekly);state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
+        state.putString("day",selectedDay.toString());if(periodStart!=null){state.putString("period_start",periodStart.toString());state.putString("period_end",periodEnd.toString());}state.putBoolean("journalLandscape",journalLandscape);super.onSaveInstanceState(state);
     }
     private int dp(float value){return Ui.dp(this,value);}
     private boolean landscape(){return retakeClip!=null?retakeClip.landscape():orientationFor(today());}
@@ -220,7 +227,7 @@ public final class MainActivity extends ComponentActivity {
         if(captureBusy)return;
         if(next==Screen.JOURNAL)retakeClip=null;
         if(next==Screen.SETTINGS)settingsReturn=screen;
-        if(next==Screen.JOURNAL&&screen==Screen.CAMERA){selectedDay=today();journalLandscape=landscape();}
+        if(next==Screen.JOURNAL&&screen==Screen.CAMERA){periodStart=null;periodEnd=null;selectedDay=today();journalLandscape=landscape();}
         if(next==Screen.CAMERA)applyOrientation();
         screen=next;render();
     }
@@ -478,53 +485,55 @@ public final class MainActivity extends ComponentActivity {
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout content=column();content.setPadding(dp(22),dp(14),dp(22),dp(28));scroll.addView(content,new ScrollView.LayoutParams(-1,-2));return content;
     }
+    private void leaveJournal(){if(periodStart!=null){periodStart=null;periodEnd=null;render();}else navigate(Screen.CAMERA);}
+    private void choosePeriod(){
+        camera.unbind();locations.stop();
+        periodPicker.launch(new Intent(this,DateRangeActivity.class)
+            .putExtra("start",(periodStart==null?selectedDay:periodStart).toString())
+            .putExtra("end",(periodEnd==null?selectedDay.plusDays(6):periodEnd).toString()));
+    }
     private void renderJournal(){
-        toolbar("日々の記録",()->navigate(Screen.CAMERA),true);
+        toolbar("日々の記録",this::leaveJournal,true);
         LinearLayout content=scrollBody();
-        List<Clip> all=repository.all();
-        LocalDate rangeStart=journalWeekly?JournalRules.weekStart(selectedDay):selectedDay;
-        LinearLayout period=row();
-        for(boolean weekly:new boolean[]{false,true}){
-            TextView mode=button(weekly?"1週間":"1日",journalWeekly==weekly,()->{journalWeekly=weekly;render();});
-            mode.setSelected(journalWeekly==weekly);LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(0,dp(40),1);size.setMargins(0,0,dp(8),0);period.addView(mode,size);
-        }
-        content.addView(period);gap(content,12);
+        List<Clip> all=repository.all();boolean combined=periodStart!=null;
+        LocalDate rangeStart=combined?periodStart:selectedDay,rangeEnd=combined?periodEnd:selectedDay;
+        content.addView(button("まとめて",false,this::choosePeriod),lp(-1,48));gap(content,12);
         TreeSet<LocalDate> days=new TreeSet<>(Comparator.reverseOrder());days.add(today());
         for(Clip clip:all)days.add(JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId())));
-        days.add(selectedDay);if(journalWeekly)for(int i=0;i<7;i++)days.add(rangeStart.plusDays(i));
+        days.add(selectedDay);if(combined){days.add(rangeStart);days.add(rangeEnd);}
         TextView activeDate=null;
         HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);LinearLayout dateRow=row();dates.addView(dateRow);
         for(LocalDate date:days){
-            boolean anchor=date.equals(selectedDay),inRange=journalWeekly&&!date.isBefore(rangeStart)&&date.isBefore(rangeStart.plusDays(7));
+            boolean anchor=date.equals(selectedDay),inRange=combined&&!date.isBefore(rangeStart)&&!date.isAfter(rangeEnd);
             TextView chip=bold(date.format(DateTimeFormatter.ofPattern("MM.dd")),14,anchor?Ui.ON_PRIMARY:inRange?Ui.BRAND:Ui.MUTED);
             chip.setGravity(Gravity.CENTER);Ui.touch(chip,anchor?Ui.BRAND:inRange?0xFFF7E5D9:Ui.CARD,10);
             chip.setSelected(anchor||inRange);chip.setContentDescription(date+((anchor||inRange)?" 選択中":""));if(anchor)activeDate=chip;
-            LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;render();});
+            LinearLayout.LayoutParams params=lp(74,48);params.setMargins(0,0,dp(9),0);dateRow.addView(chip,params);chip.setOnClickListener(v->{selectedDay=date;periodStart=null;periodEnd=null;render();});
         }
         content.addView(dates,lp(-1,48));gap(content,20);
         TextView focusDate=activeDate;dates.post(()->{if(focusDate!=null)dates.scrollTo(Math.max(0,focusDate.getLeft()-dp(90)),0);});
-        if(journalWeekly){content.addView(text(rangeStart.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))+" – "+rangeStart.plusDays(6).format(DateTimeFormatter.ofPattern("yyyy.MM.dd")),14,Ui.MUTED));gap(content,8);}
+        if(combined){content.addView(text(rangeStart.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))+" – "+rangeEnd.format(DateTimeFormatter.ofPattern("yyyy.MM.dd")),14,Ui.MUTED));gap(content,8);}
         journalLandscape=JournalRules.orientationFor(all,selectedDay,boundary(),prefs.getBoolean("landscape",false));
-        List<Clip> list=journalWeekly?JournalRules.clipsBetween(all,rangeStart,rangeStart.plusDays(7),boundary()):JournalRules.clipsFor(all,selectedDay,journalLandscape,boundary(),false);
+        List<Clip> list=combined?JournalRules.clipsBetween(all,rangeStart,rangeEnd.plusDays(1),boundary()):JournalRules.clipsFor(all,selectedDay,journalLandscape,boundary(),false);
         List<Clip> selected=list.stream().filter(Clip::included).toList();
         long total=selected.stream().mapToLong(JournalRules::exportDuration).sum();
         LinearLayout summary=row();
         TextView count=bold(seconds(total)+"秒",16,Ui.INK);count.setGravity(Gravity.CENTER_VERTICAL);
         summary.addView(count,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView save=button("レンダリング","library",true,()->{if(journalWeekly)exportWeek(selected,rangeStart);else export(selected,selectedDay.toString(),journalLandscape);});
+        TextView save=button("レンダリング","library",true,()->{if(combined)exportPeriod(selected,rangeStart,rangeEnd);else export(selected,selectedDay.toString(),journalLandscape);});
         save.setEnabled(!selected.isEmpty());save.setAlpha(selected.isEmpty()?.4f:1f);Ui.touch(save,Ui.BRAND,10);summary.addView(save,lp(-2,48));content.addView(summary);gap(content,20);
         if(list.isEmpty()){TextView empty=text("動画がありません",14,Ui.MUTED);empty.setGravity(Gravity.CENTER);content.addView(empty,lp(-1,120));}
         // Boundary changes can regroup older, opposite-format footage. Keep it available individually.
-        List<Clip> other=journalWeekly?List.of():JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
+        List<Clip> other=combined?List.of():JournalRules.clipsFor(all,selectedDay,!journalLandscape,boundary(),false);
         int columns=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE?3:2;
-        if(journalWeekly){
+        if(combined){
             java.util.Map<LocalDate,List<Clip>> groups=new java.util.TreeMap<>();
             for(Clip clip:list){
                 LocalDate date=JournalRules.day(clip.capturedAt(),boundary(),ZoneId.of(clip.zoneId()));
                 groups.computeIfAbsent(date,ignored->new ArrayList<>()).add(clip);
             }
             for(var entry:groups.entrySet()){
-                content.addView(bold(entry.getKey().format(DateTimeFormatter.ofPattern("MM.dd EEE",Locale.ENGLISH)),15,Ui.INK));gap(content,12);
+                content.addView(bold(entry.getKey().format(DateTimeFormatter.ofPattern("yyyy.MM.dd EEE",Locale.ENGLISH)),15,Ui.INK));gap(content,12);
                 clipRows(content,entry.getValue(),columns);
             }
         }else clipRows(content,list,columns);
@@ -661,14 +670,14 @@ public final class MainActivity extends ComponentActivity {
         dialog.setOnDismissListener(d->{main.removeCallbacks(save);edited[0]=edited[0].withPlace(input.getText().toString());repository.rememberPlace(edited[0].location(),edited[0].place());save.run();refreshPreview.run();refreshChoices.run();});
         dialog.show();focusEditor(input,dialog);
     }
-    private void exportWeek(List<Clip> selected,LocalDate start){
+    private void exportPeriod(List<Clip> selected,LocalDate start,LocalDate end){
         if(selected.isEmpty()){toast("クリップを選択してください");return;}
         boolean portrait=selected.stream().anyMatch(clip->!clip.landscape()),wide=selected.stream().anyMatch(Clip::landscape);
         java.util.function.Consumer<Boolean> open=landscape->{
             List<Clip> clips=selected.stream().filter(clip->clip.landscape()==landscape).toList();
             camera.unbind();locations.stop();
             startActivity(new Intent(this,MovieActivity.class).putStringArrayListExtra("clips",new ArrayList<>(clips.stream().map(Clip::id).toList()))
-                .putExtra("day",start.toString()).putExtra("weekly",true).putExtra("landscape",landscape));
+                .putExtra("day",start.toString()).putExtra("period_end",end.toString()).putExtra("landscape",landscape));
         };
         if(portrait&&wide)new AlertDialog.Builder(this).setTitle("動画の向き").setItems(new String[]{"縦の動画","横の動画"},(dialog,which)->open.accept(which==1)).show();
         else open.accept(wide);

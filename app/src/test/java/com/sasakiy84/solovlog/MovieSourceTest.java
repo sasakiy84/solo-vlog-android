@@ -1,5 +1,6 @@
 package com.sasakiy84.solovlog;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 
@@ -16,6 +17,13 @@ public final class MovieSourceTest {
         assertNotEquals(MovieDraft.signature(List.of(clip),"2026-10-31","夕方",true,false),original);
         assertNotEquals(MovieDraft.signature(List.of(clip),"2026-10-31","旅行",false,false),original);
         assertNotEquals(MovieDraft.signature(List.of(clip),"2026-10-31","旅行",true,true),original);
+    }
+    @Test public void singleDayCombinedRenderStillUsesTheSelectedCaptionMode(){
+        MovieDraft draft=new MovieDraft("00000000-0000-0000-0000-000000000002");
+        draft.combined=true;draft.caption="Trip";draft.dayCaptions.put("2026-11-04","Kyoto");
+        Clip source=new Clip(clip.id(),java.time.Instant.parse("2026-11-04T09:00:00Z").toEpochMilli(),2000,2,false,true,"UTC");
+        assertEquals("Kyoto",draft.captionFor(source));
+        draft.useDayCaptions=false;assertEquals("Trip",draft.captionFor(source));
     }
     @Test public void unsafeRenderIdentifiersCannotReachFilesystem(){
         assertThrows(IllegalArgumentException.class,()->new MovieDraft("../../clip"));

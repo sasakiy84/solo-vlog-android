@@ -61,10 +61,10 @@ public final class MovieActivity extends ComponentActivity {
             else{
                 List<String> ids=getIntent().getStringArrayListExtra("clips");if(ids==null||ids.isEmpty())throw new IllegalArgumentException("No clips");
                 var prefs=getSharedPreferences("daylog",0);
-                MovieDraft created=getIntent().getBooleanExtra("weekly",false)
-                    ?MovieDraft.createWeek(this,getIntent().getStringExtra("day"),ids,getIntent().getBooleanExtra("landscape",false))
+                MovieDraft created=getIntent().hasExtra("period_end")
+                    ?MovieDraft.createPeriod(this,getIntent().getStringExtra("day"),getIntent().getStringExtra("period_end"),ids,getIntent().getBooleanExtra("landscape",false))
                     :MovieDraft.create(this,getIntent().getStringExtra("day"),ids,getIntent().getStringExtra("caption"),prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
-                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime,created.showDate)+":"+created.compact+":"+created.embedLocation+":"+created.days+":"+created.dayBoundary+":"+created.dayCaptions;
+                created.sourceSignature=MovieDraft.signature(created.clips(repository),created.day,created.caption,created.showTime,created.showDate)+":"+created.compact+":"+created.embedLocation+":"+created.combined+":"+created.days+":"+created.dayBoundary+":"+created.dayCaptions;
                 String cachedId=prefs.getString("movieDraft:"+created.sourceSignature,null);draft=created;
                 if(cachedId!=null)try{draft=drafts.load(cachedId);}catch(Exception e){android.util.Log.w("DaylogMovie","Cached draft unavailable",e);}
                 drafts.save(draft);prefs.edit().putString("movieDraft:"+created.sourceSignature,draft.id).apply();
@@ -94,7 +94,10 @@ public final class MovieActivity extends ComponentActivity {
         fileNameSection.addView(Ui.text(this,"保存名",14,Ui.MUTED),size(-1,-2));
         LinearLayout nameRow=row();fileNameInput=new EditText(this);fileNameInput.setText(draft.fileName);fileNameInput.setContentDescription("保存名");fileNameInput.setSingleLine(true);fileNameInput.setTextSize(16);fileNameInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);fileNameInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);fileNameInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});nameRow.addView(fileNameInput,new LinearLayout.LayoutParams(0,dp(64),1));TextView extension=Ui.text(this,".mp4",16,Ui.MUTED);extension.setPadding(dp(8),0,dp(8),0);nameRow.addView(extension,size(-2,64));extension.setGravity(Gravity.CENTER_VERTICAL);fileNameSection.addView(nameRow,size(-1,64));controls.add(fileNameInput);
         fileNameInput.addTextChangedListener(new TextWatcher(){@Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}@Override public void onTextChanged(CharSequence s,int start,int before,int count){draft.fileName=s.toString();draft.savedUri="";queuePersist();updateUi();}@Override public void afterTextChanged(Editable s){}});
-        settings=column();content.addView(settings,size(-1,-2));EditText text=new EditText(this);text.setText(draft.caption);String captionLabel=draft.days==7?"1週間のテキスト":"1日のテキスト";text.setHint(captionLabel);text.setContentDescription(captionLabel);text.setTextSize(16);text.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);text.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);text.setOnEditorActionListener((v,action,event)->{if(action==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){getWindow().getInsetsController().hide(WindowInsets.Type.ime());text.clearFocus();return true;}return false;});text.setMinLines(1);text.setMaxLines(4);text.setMinHeight(dp(56));text.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);text.setPadding(dp(4),dp(12),dp(4),dp(6));text.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});LinearLayout.LayoutParams textParams=size(-1,-2);textParams.topMargin=dp(8);textParams.bottomMargin=dp(16);settings.addView(text,textParams);controls.add(text);
+        settings=column();content.addView(settings,size(-1,-2));
+        LinearLayout captionEditors=column();settings.addView(captionEditors,size(-1,-2));
+        LinearLayout globalCaption=column();captionEditors.addView(globalCaption,size(-1,-2));
+        EditText text=new EditText(this);text.setText(draft.caption);String captionLabel=draft.combined?"全体のテキスト":"1日のテキスト";text.setHint(captionLabel);text.setContentDescription(captionLabel);text.setTextSize(16);text.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);text.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);text.setOnEditorActionListener((v,action,event)->{if(action==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){getWindow().getInsetsController().hide(WindowInsets.Type.ime());text.clearFocus();return true;}return false;});text.setMinLines(1);text.setMaxLines(4);text.setMinHeight(dp(56));text.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);text.setPadding(dp(4),dp(12),dp(4),dp(6));text.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});LinearLayout.LayoutParams textParams=size(-1,-2);textParams.topMargin=dp(8);textParams.bottomMargin=dp(16);globalCaption.addView(text,textParams);controls.add(text);
         text.addTextChangedListener(new TextWatcher(){
             @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){
@@ -103,6 +106,28 @@ public final class MovieActivity extends ComponentActivity {
             }
             @Override public void afterTextChanged(Editable s){}
         });
+        if(draft.combined){
+            LinearLayout dailyCaptions=column();captionEditors.addView(dailyCaptions,size(-1,-2));
+            for(var entry:draft.dayCaptions.entrySet()){
+                String day=entry.getKey();
+                dailyCaptions.addView(Ui.text(this,java.time.LocalDate.parse(day).format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd EEE",java.util.Locale.ENGLISH)),14,Ui.MUTED),size(-1,-2));
+                EditText input=new EditText(this);input.setText(entry.getValue());input.setHint("テキスト");input.setContentDescription(day+"のテキスト");input.setTextSize(16);input.setSingleLine(true);input.setMinHeight(dp(56));input.setPadding(dp(4),dp(12),dp(4),dp(6));input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});
+                LinearLayout.LayoutParams params=size(-1,-2);params.bottomMargin=dp(16);dailyCaptions.addView(input,params);controls.add(input);
+                input.addTextChangedListener(new TextWatcher(){
+                    @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+                    @Override public void onTextChanged(CharSequence s,int start,int before,int count){draft.dayCaptions.put(day,s.toString());changed();}
+                    @Override public void afterTextChanged(Editable s){}
+                });
+            }
+            LinearLayout mode=row();mode.addView(Ui.text(this,"テキスト",16,Ui.INK),new LinearLayout.LayoutParams(0,-2,1));
+            android.widget.Spinner selector=new android.widget.Spinner(this);
+            selector.setContentDescription("テキストの指定方法");selector.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"日ごと","全体で1つ"}));selector.setSelection(draft.useDayCaptions?0:1);mode.addView(selector,size(-2,56));controls.add(selector);settings.addView(mode,0,size(-1,56));
+            Runnable showCaptionMode=()->{dailyCaptions.setVisibility(draft.useDayCaptions?View.VISIBLE:View.GONE);globalCaption.setVisibility(draft.useDayCaptions?View.GONE:View.VISIBLE);};showCaptionMode.run();
+            selector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+                @Override public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){boolean daily=position==0;if(draft.useDayCaptions==daily)return;View focused=getCurrentFocus();if(focused!=null)focused.clearFocus();getWindow().getInsetsController().hide(WindowInsets.Type.ime());draft.useDayCaptions=daily;showCaptionMode.run();changed();}
+                @Override public void onNothingSelected(android.widget.AdapterView<?> parent){}
+            });
+        }
         toggle("年月日を表示",draft.showDate,value->{draft.showDate=value;changed();});toggle("撮影時刻を表示",draft.showTime,value->{draft.showTime=value;changed();});toggle("クリップのテキストを表示",draft.showText,value->{draft.showText=value;rebuildPreviewClips();changed();});toggle("場所を表示",draft.showPlace,value->{draft.showPlace=value;rebuildPreviewClips();changed();});toggle("音声を含める",draft.audio,value->{draft.audio=value;changed();});
         toggle("容量優先 · 1080p",draft.compact,value->{draft.compact=value;changed();});
         toggle("位置情報を埋め込む",draft.embedLocation,value->{draft.embedLocation=value;changed();});
@@ -141,7 +166,7 @@ public final class MovieActivity extends ComponentActivity {
     private void changed(){if(player!=null)player.setVolume(previewAudio.isAudible()&&previewHasAudio()?1:0);draft.status="editing";draft.error="";draft.savedUri="";queuePersist();updateUi();}
     private void rebuildPreviewClips(){previewClips=draft.displayClips(sourceClips);}
     private void queuePersist(){pendingEdits=true;main.removeCallbacks(saveEdits);main.postDelayed(saveEdits,250);}
-    private boolean persist(){main.removeCallbacks(saveEdits);try{if(draft.days==1)repository.dayCaption(draft.day,draft.caption);drafts.save(draft);pendingEdits=false;return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
+    private boolean persist(){main.removeCallbacks(saveEdits);try{if(!draft.combined)repository.dayCaption(draft.day,draft.caption);drafts.save(draft);pendingEdits=false;return true;}catch(Exception e){android.util.Log.e("DaylogMovie","Could not save draft",e);toast("調整を保存できませんでした");return false;}}
     private void startRender(){if(saving||"rendering".equals(draft.status))return;if(RenderService.activeId!=null){toast("別の動画を処理中です");return;}draft.status="rendering";draft.error="";if(!persist()){draft.status="editing";return;}try{RenderService.activeId=draft.id;ContextCompat.startForegroundService(this,new Intent(this,RenderService.class).putExtra("draft_id",draft.id));updateUi();}catch(RuntimeException e){RenderService.activeId=null;draft.status="error";draft.error="レンダリングを開始できませんでした";persist();updateUi();}}
     private void refreshSavedCopy(){
         if(draft.savedUri.isEmpty())return;

@@ -16,7 +16,7 @@ final class MovieDraft {
     int days=1,dayBoundary=240;
     final Map<String,String> dayCaptions=new java.util.TreeMap<>();
     boolean showDate=false,showTime=true,showText=true,showPlace=true,audio=true;
-    boolean compact=false,embedLocation=true;
+    boolean compact=false,embedLocation=true,combined=false,useDayCaptions=true;
     final List<String> clipIds=new ArrayList<>();
     MovieDraft(String id){if(id==null||!id.matches("[a-f0-9-]{36}"))throw new IllegalArgumentException("Invalid movie identifier");this.id=id;}
     static MovieDraft create(Context context,String day,List<String> ids,String caption,boolean showTime,boolean showDate){
@@ -26,23 +26,30 @@ final class MovieDraft {
         var prefs=context.getSharedPreferences("daylog",0);draft.dayBoundary=prefs.getInt("dayStart",240);draft.compact=prefs.getBoolean("compactExport",false);draft.embedLocation=prefs.getBoolean("embedLocation",true);
         return draft;
     }
-    static MovieDraft createWeek(Context context,String start,List<String> ids,boolean landscape){
+    static MovieDraft createPeriod(Context context,String start,String end,List<String> ids,boolean landscape){
+        LocalDate first=LocalDate.parse(start),last=LocalDate.parse(end);
+        int days=Math.toIntExact(java.time.temporal.ChronoUnit.DAYS.between(first,last)+1);
+        if(days<1)throw new IllegalArgumentException("Invalid render period");
         var prefs=context.getSharedPreferences("daylog",0);
         MovieDraft draft=create(context,start,ids,"",prefs.getBoolean("showTime",true),prefs.getBoolean("showDate",false));
-        draft.days=7;LocalDate first=LocalDate.parse(start);
-        draft.fileName=start+"_"+first.plusDays(6)+(landscape?"-landscape":"-portrait");
+        draft.days=days;draft.combined=true;
+        draft.fileName=start+"_"+end+(landscape?"-landscape":"-portrait");
         ClipRepository repository=ClipRepository.get(context);
-        for(int i=0;i<7;i++){String day=first.plusDays(i).toString();draft.dayCaptions.put(day,repository.dayCaption(day));}
+        // Load only dates with selected footage, even when the calendar range spans years.
+        for(Clip clip:repository.forIds(ids)){
+            LocalDate day=JournalRules.day(clip.capturedAt(),draft.dayBoundary,java.time.ZoneId.of(clip.zoneId()));
+            if(day.isBefore(first)||day.isAfter(last))throw new IllegalArgumentException("Clip outside render period");
+            draft.dayCaptions.computeIfAbsent(day.toString(),repository::dayCaption);
+        }
         return draft;
     }
     String captionFor(Clip clip){
-        if(days==1)return caption;
+        if(!combined||!useDayCaptions)return caption;
         String date=JournalRules.day(clip.capturedAt(),dayBoundary,java.time.ZoneId.of(clip.zoneId())).toString();
-        String text=dayCaptions.getOrDefault(date,"");
-        return caption.isBlank()?text:text.isBlank()?caption:caption+"\n"+text;
+        return dayCaptions.getOrDefault(date,"");
     }
     static String signature(List<Clip> clips,String day,String caption,boolean showTime,boolean showDate){
-        String source="captions-v5\n"+clips+"\n"+day+"\n"+caption+"\n"+showTime+"\n"+showDate;
+        String source="captions-v6\n"+clips+"\n"+day+"\n"+caption+"\n"+showTime+"\n"+showDate;
         try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8)));}
         catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
     }

@@ -26,9 +26,6 @@ public final class JournalRules {
             .sorted(Comparator.comparingLong(Clip::capturedAt).thenComparing(Clip::id)).toList();
     }
 
-    public static LocalDate weekStart(LocalDate day){
-        return day.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
-    }
     public static List<Clip> clipsBetween(List<Clip> clips,LocalDate start,LocalDate endExclusive,int startMinutes){
         return clips.stream().filter(clip->{
             LocalDate date=day(clip.capturedAt(),startMinutes,ZoneId.of(clip.zoneId()));
